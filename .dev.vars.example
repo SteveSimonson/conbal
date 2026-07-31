@@ -1,0 +1,2 @@
+# Optional: require this code at signup to gate public registrations.
+# SIGNUP_INVITE_CODE=replace-me

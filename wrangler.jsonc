@@ -1,0 +1,13 @@
+{
+  "name": "conbal",
+  "main": "workers/site.js",
+  "compatibility_date": "2026-07-31",
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/b/*"] },
+  "routes": [
+    { "pattern": "conbal.us", "zone_name": "conbal.us" }, { "pattern": "conbal.us/*", "zone_name": "conbal.us" },
+    { "pattern": "www.conbal.us", "zone_name": "conbal.us" }, { "pattern": "www.conbal.us/*", "zone_name": "conbal.us" }
+  ],
+  "d1_databases": [{ "binding": "DB", "database_name": "conbal-db", "database_id": "REPLACE_WITH_D1_DATABASE_ID" }],
+  "kv_namespaces": [{ "binding": "CONBAL_KV", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
+  "observability": { "enabled": true }
+}
