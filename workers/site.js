@@ -1,5 +1,8 @@
 const encoder = new TextEncoder();
 const fixedSizes = new Set(['responsive', '300x250', '336x280', '728x90', '160x600', '320x100']);
+const maxImportBytes = 512000;
+const maxImportRows = 100;
+const maxImportRowChars = 75000;
 const json = (data, init = {}) => new Response(JSON.stringify(data), { ...init, headers: { 'content-type': 'application/json; charset=utf-8', ...(init.headers || {}) } });
 const fail = (error, status = 400) => json({ error }, { status });
 const id = () => crypto.randomUUID();
@@ -19,10 +22,39 @@ async function hashPassword(password, saved) {
 async function verifyPassword(password, stored) { return (await hashPassword(password, stored)) === stored; }
 function cookies(request) { return Object.fromEntries((request.headers.get('cookie') || '').split(';').map(v => v.trim().split('=').map(decodeURIComponent)).filter(v => v[0])); }
 async function body(request) { try { return await request.json(); } catch { throw new Error('Expected a JSON body'); } }
+function importError(message, status = 400) { throw Object.assign(new Error(message), { status }); }
+async function csvBody(request) {
+  const contentLength=Number(request.headers.get('content-length') || 0); if(contentLength>maxImportBytes) importError('CSV file is too large',413);
+  const contentType=(request.headers.get('content-type') || '').split(';',1)[0].trim().toLowerCase(); let csv;
+  if(contentType==='text/csv'){ csv=await request.text(); }
+  else if(contentType==='application/json'){ const data=await body(request); csv=data?.csv; }
+  else importError('Use text/csv or JSON with a csv field',415);
+  if(typeof csv!=='string') importError('Expected a CSV string'); if(new TextEncoder().encode(csv).byteLength>maxImportBytes) importError('CSV file is too large',413); return csv;
+}
+function parseCsv(csv) {
+  const rows=[]; let row=[], field='', quoted=false, quoteClosed=false, endedWithNewline=false;
+  for(let i=0;i<csv.length;i++) { const char=csv[i];
+    if(quoted) { if(char==='"') { if(csv[i+1]==='"'){field+='"';i++;} else {quoted=false;quoteClosed=true;} } else field+=char; endedWithNewline=false; continue; }
+    if(quoteClosed&&char!==','&&char!=='\n'&&char!=='\r') importError(`Malformed CSV near character ${i+1}`);
+    if(char==='"') { if(field||quoteClosed) importError(`Malformed CSV near character ${i+1}`); quoted=true; endedWithNewline=false; continue; }
+    if(char===',') { row.push(field); field=''; quoteClosed=false; endedWithNewline=false; continue; }
+    if(char==='\n'||char==='\r') { if(char==='\r'&&csv[i+1]==='\n')i++; row.push(field); rows.push(row); row=[]; field=''; quoteClosed=false; endedWithNewline=true; continue; }
+    field+=char; endedWithNewline=false;
+  }
+  if(quoted) importError('CSV contains an unterminated quoted field'); if(!endedWithNewline||field||row.length){row.push(field);rows.push(row);} return rows;
+}
+function csvImportRows(csv) {
+  const rows=parseCsv(csv); if(!rows.length) importError('CSV must include a header row'); const headers=rows.shift().map((value,index)=>(index===0?value.replace(/^\uFEFF/,''):value).trim().toLowerCase());
+  const required=['title','slug','size','html','css']; const indexes={}; for(const name of required){const index=headers.indexOf(name);if(index<0)importError(`CSV is missing required ${name} column`);if(headers.indexOf(name,index+1)>=0)importError(`CSV contains duplicate ${name} columns`);indexes[name]=index;}
+  if(rows.length>maxImportRows) importError(`CSV may contain at most ${maxImportRows} balloon rows`,413); const slugs=new Set(); const balloons=[];
+  rows.forEach((row,rowIndex)=>{const number=rowIndex+2;if(row.join('').length>maxImportRowChars)importError(`Row ${number}: row is too large`,413);if(row.length>headers.length)importError(`Row ${number}: has more columns than the header`);const data=Object.fromEntries(required.map(name=>[name,row[indexes[name]] ?? '']));let balloon;try{balloon=cleanBalloon(data);}catch(error){importError(`Row ${number}: ${error.message}`);}if(slugs.has(balloon.slug))importError(`Row ${number}: duplicate slug "${balloon.slug}" in this file`);slugs.add(balloon.slug);balloons.push({...balloon,sourceRow:number});});
+  if(!balloons.length) importError('CSV must include at least one balloon row'); return balloons;
+}
 function validEmail(email) { return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email); }
 function validSlug(slug) { return typeof slug === 'string' && /^[a-z0-9-]{1,80}$/.test(slug); }
 function validSiteKey(siteKey) { return typeof siteKey === 'string' && /^[A-Za-z0-9_-]{12}$/.test(siteKey); }
 function isEmailConflict(error) { return /UNIQUE constraint failed: users\.email/i.test(String(error?.message || error)); }
+function isBalloonSlugConflict(error) { return /UNIQUE constraint failed: balloons\.site_id, balloons\.slug/i.test(String(error?.message || error)); }
 function cookie(value, age = 0) { return `conbal_session=${encodeURIComponent(value || '')}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`; }
 function oauthStateCookie(value, age = 0) { return `conbal_oauth_state=${encodeURIComponent(value || '')}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`; }
 function googleCallbackUrl(url) { return ['localhost', '127.0.0.1'].includes(url.hostname) ? `${url.origin}/api/auth/google/callback` : 'https://conbal.us/api/auth/google/callback'; }
@@ -98,6 +130,8 @@ async function api(request, env, url) {
   let match = path.match(/^\/api\/sites\/([^/]+)$/);
   if (match && method === 'PATCH') { const site=await ownerSite(env,user,match[1]), {name}=await body(request); if(typeof name !== 'string'||!name.trim()||name.length>120)return fail('Enter a site name'); await env.DB.prepare('UPDATE sites SET name=? WHERE id=?').bind(name.trim(),site.id).run(); return json({ok:true}); }
   if (match && method === 'DELETE') { const site=await ownerSite(env,user,match[1]); const bs=(await env.DB.prepare('SELECT slug FROM balloons WHERE site_id=?').bind(site.id).all()).results; await Promise.all(bs.map(b=>env.CONBAL_KV.delete(`b:${site.site_key}:${b.slug}`))); await env.DB.batch([env.DB.prepare('DELETE FROM balloons WHERE site_id=?').bind(site.id),env.DB.prepare('DELETE FROM sites WHERE id=?').bind(site.id)]); return json({ok:true}); }
+  match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/import$/);
+  if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const imported=csvImportRows(await csvBody(request)); const existing=(await env.DB.prepare('SELECT slug FROM balloons WHERE site_id=?').bind(site.id).all()).results.map(row=>row.slug); const existingSlugs=new Set(existing); for(const balloon of imported)if(existingSlugs.has(balloon.slug))return fail(`Row ${balloon.sourceRow}: a balloon with slug "${balloon.slug}" already exists for this site`,409); const balloons=imported.map(({sourceRow,...balloon})=>({id:id(),site_id:site.id,...balloon,status:'draft'})); try{await env.DB.batch(balloons.map(balloon=>env.DB.prepare("INSERT INTO balloons (id,site_id,slug,title,html,css,size,status) VALUES (?,?,?,?,?,?,?,?)").bind(balloon.id,balloon.site_id,balloon.slug,balloon.title,balloon.html,balloon.css,balloon.size,balloon.status)));}catch(error){if(isBalloonSlugConflict(error))return fail('A balloon with one of these slugs was created concurrently; no balloons were imported',409);console.error('balloon import failed',error);return fail('Unable to import balloons; no changes were made',500);} return json({imported:balloons.length,items:balloons},{status:201}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons$/);
   if (match && method === 'GET') { const site=await ownerSite(env,user,match[1]); return json((await env.DB.prepare('SELECT * FROM balloons WHERE site_id=? ORDER BY updated_at DESC').bind(site.id).all()).results); }
   if (match && method === 'POST') { const site=await ownerSite(env,user,match[1]); const b={id:id(),site_id:site.id,...cleanBalloon(await body(request))}; try { await env.DB.prepare('INSERT INTO balloons (id,site_id,slug,title,html,css,size) VALUES (?,?,?,?,?,?,?)').bind(b.id,b.site_id,b.slug,b.title,b.html,b.css,b.size).run(); } catch{return fail('That slug already exists for this site',409)} return json(b,{status:201}); }
