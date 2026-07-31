@@ -1,0 +1,27 @@
+{
+  "siteKey": "CONBALDEMO01",
+  "siteName": "Conbal Live Examples",
+  "balloons": [
+    {
+      "slug": "announcement-bar",
+      "title": "Launch announcement bar",
+      "size": "responsive",
+      "html": "<section class=\"cb-demo-announcement\" aria-label=\"Conbal live example\"><span class=\"cb-demo-announcement__tag\">Live content balloon</span><strong>Launch a new offer without rebuilding the page.</strong><a href=\"/admin/login.html\">Create one <span aria-hidden=\"true\">&rarr;</span></a></section>",
+      "css": ".cb-demo-announcement{display:flex;align-items:center;justify-content:center;gap:16px;width:100%;min-height:76px;padding:14px 22px;border-radius:14px;background:#111a35;color:#fff;font:700 15px/1.35 system-ui,sans-serif}.cb-demo-announcement__tag{padding:6px 9px;border-radius:999px;background:#95d8c7;color:#153c33;font-size:10px;font-weight:900;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}.cb-demo-announcement strong{font-size:clamp(14px,2vw,18px)}.cb-demo-announcement a{color:#fff;text-underline-offset:4px;white-space:nowrap}.cb-demo-announcement a:focus-visible{outline:3px solid #ff7d69;outline-offset:3px}@media(max-width:620px){.cb-demo-announcement{align-items:flex-start;flex-direction:column;gap:8px}.cb-demo-announcement a{min-height:44px;display:inline-flex;align-items:center}}"
+    },
+    {
+      "slug": "promotion-card",
+      "title": "Fresh drop promotion card",
+      "size": "300x250",
+      "html": "<article class=\"cb-demo-promotion\"><span class=\"cb-demo-promotion__orb\" aria-hidden=\"true\"></span><p>Fresh drop</p><h3>Make the message move.</h3><span>Publish the moment. Keep the page.</span><a href=\"/admin/login.html\">Build yours <span aria-hidden=\"true\">&rarr;</span></a></article>",
+      "css": ".cb-demo-promotion{position:relative;display:flex;flex-direction:column;width:300px;height:250px;overflow:hidden;padding:23px;border-radius:18px;background:linear-gradient(145deg,#5b5ce2,#3637a9);color:#fff;font:15px/1.35 system-ui,sans-serif}.cb-demo-promotion__orb{position:absolute;width:150px;height:150px;right:-46px;top:-54px;border-radius:50%;background:#95d8c7;box-shadow:-56px 116px 0 4px #ff7d69;opacity:.92}.cb-demo-promotion p,.cb-demo-promotion h3,.cb-demo-promotion>span:not(.cb-demo-promotion__orb),.cb-demo-promotion a{position:relative}.cb-demo-promotion p{margin:0 0 17px;font-size:10px;font-weight:900;letter-spacing:.16em;text-transform:uppercase}.cb-demo-promotion h3{max-width:210px;margin:0 0 8px;font-size:30px;line-height:.98;letter-spacing:-.04em}.cb-demo-promotion>span:not(.cb-demo-promotion__orb){color:#e7e8ff;font-size:12px}.cb-demo-promotion a{align-self:flex-start;margin-top:auto;color:#fff;font-weight:800;text-underline-offset:4px}.cb-demo-promotion a:focus-visible{outline:3px solid #fff;outline-offset:3px}"
+    },
+    {
+      "slug": "signup-banner",
+      "title": "Compact signup banner",
+      "size": "320x100",
+      "html": "<aside class=\"cb-demo-signup\" aria-label=\"Conbal signup example\"><span><small>Content, untethered</small><strong>Fresh ideas. Same page.</strong></span><a href=\"/admin/login.html\">Start</a></aside>",
+      "css": ".cb-demo-signup{display:flex;align-items:center;justify-content:space-between;width:320px;height:100px;overflow:hidden;padding:16px 18px;border:1px solid #ded8cf;border-radius:16px;background:#fffaf3;color:#111a35;font:14px/1.2 system-ui,sans-serif;box-shadow:inset 7px 0 0 #ff7d69}.cb-demo-signup>span{display:grid;gap:6px}.cb-demo-signup small{color:#5b5ce2;font-size:9px;font-weight:900;letter-spacing:.13em;text-transform:uppercase}.cb-demo-signup strong{font-size:15px}.cb-demo-signup a{display:grid;place-items:center;min-width:58px;min-height:44px;border-radius:999px;background:#111a35;color:#fff;font-size:12px;font-weight:900;text-decoration:none}.cb-demo-signup a:focus-visible{outline:3px solid #ff7d69;outline-offset:3px}"
+    }
+  ]
+}

@@ -3,26 +3,36 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Sign in to Conbal</title>
-  <style>
-    body{max-width:360px;margin:10vh auto;padding:0 18px;font:16px system-ui;color:#172033}input,button{box-sizing:border-box;width:100%;padding:10px;margin:6px 0}label{display:block;margin-top:10px}button{cursor:pointer}button:focus-visible,input:focus-visible{outline:3px solid #3858d6;outline-offset:2px}#message{min-height:1.5em;color:#b42318}.or{text-align:center;color:#667085}
-  </style>
+  <meta name="description" content="Sign in to Conbal to create, publish, place, and measure content balloons across your websites.">
+  <title>Welcome to Conbal</title>
+  <link rel="stylesheet" href="/marketing.css">
 </head>
-<body>
-  <main>
-    <h1>Conbal</h1>
-    <p id="message" role="alert" aria-live="assertive"></p>
-    <button id="google-login" type="button">Continue with Google</button>
-    <p class="or">or</p>
-    <form id="auth">
-      <label>Email <input name="email" type="email" autocomplete="email" required></label>
-      <label>Password <input name="password" type="password" autocomplete="current-password" minlength="8" required></label>
-      <label>Invite code <input name="inviteCode" autocomplete="off" aria-describedby="invite-help"></label>
-      <small id="invite-help">Required only when account creation is invite-only.</small>
-      <button name="action" value="login">Log in</button>
-      <button name="action" value="signup">Create account</button>
-    </form>
-  </main>
+<body class="auth-body">
+  <a class="skip-link" href="#auth-card">Skip to sign in</a>
+  <div class="auth-shell">
+    <aside class="auth-story">
+      <a class="brand" href="/" aria-label="Conbal home"><span class="brand-mark" aria-hidden="true"></span>Conbal</a>
+      <div class="auth-story-copy"><p class="eyebrow">Content that moves with you</p><h2>Bring the next idea live.</h2><p>Create, publish, place, and measure flexible content across every website you run.</p><div class="auth-points"><span>Multi-site</span><span>CSV + LLM ready</span><span>Delivery analytics</span></div></div>
+    </aside>
+    <main class="auth-main">
+      <section class="auth-card" id="auth-card" aria-labelledby="auth-heading">
+        <a class="brand mobile-brand" href="/" aria-label="Conbal home"><span class="brand-mark" aria-hidden="true"></span>Conbal</a>
+        <h1 id="auth-heading">Welcome to Conbal.</h1>
+        <p class="intro">Sign in to manage the content across your sites.</p>
+        <p id="message" role="alert" aria-live="assertive"></p>
+        <button class="button google-button" id="google-login" type="button"><span class="google-g" aria-hidden="true">G</span>Continue with Google</button>
+        <p class="or">or sign in with email</p>
+        <form id="auth">
+          <label>Email <input name="email" type="email" autocomplete="email" required></label>
+          <label>Password <input name="password" type="password" autocomplete="current-password" minlength="8" required></label>
+          <label>Invite code <input name="inviteCode" autocomplete="off" aria-describedby="invite-help"></label>
+          <small id="invite-help">Only needed when creating an account while Conbal is invite-only.</small>
+          <div class="auth-actions"><button class="button" name="action" value="login">Log in</button><button class="button button-secondary" name="action" value="signup">New to Conbal? Create an account</button></div>
+        </form>
+        <a class="back-home" href="/">← Explore Conbal first</a>
+      </section>
+    </main>
+  </div>
   <script>
     const form=document.querySelector('#auth'), message=document.querySelector('#message'), googleLogin=document.querySelector('#google-login');
     googleLogin.onclick=async()=>{
