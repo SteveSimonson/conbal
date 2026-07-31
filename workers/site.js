@@ -69,7 +69,7 @@ function cleanBalloon(data) {
 }
 async function publish(env, balloon) {
   const key = `b:${balloon.site_key}:${balloon.slug}`;
-  await env.CONBAL_KV.put(key, JSON.stringify({ html: balloon.html, css: balloon.css, size: balloon.size }));
+  await env.CONBAL_KV.put(key, JSON.stringify({ balloonId: balloon.id, html: balloon.html, css: balloon.css, size: balloon.size }));
 }
 async function createSession(env, user) { const value=token(16); await env.CONBAL_KV.put(`s:${value}`,JSON.stringify({id:user.id,email:user.email}),{expirationTtl:604800}); return value; }
 async function googleAuth(request, env, url) {
@@ -92,12 +92,38 @@ async function googleAuth(request, env, url) {
   const email=typeof profile.email==='string' ? profile.email.trim().toLowerCase() : ''; if(typeof profile.sub!=='string'||!profile.sub||!validEmail(email)||profile.email_verified!==true)return fail('Google did not provide a verified email',403); let user=await env.DB.prepare('SELECT id,email FROM users WHERE google_id=?').bind(profile.sub).first(); if(!user){ if(!oauthState.inviteAuthorized)return fail('A valid invite code is required',403); user={id:id(),email}; try{await env.DB.prepare('INSERT INTO users (id,email,password_hash,google_id) VALUES (?,?,?,?)').bind(user.id,user.email,await hashPassword(token(24)),profile.sub).run()}catch{return fail('An account already exists with this email; sign in with email first',409)} } const s=await createSession(env,user); const headers=new Headers({location:`${new URL(callback).origin}/admin/`}); headers.append('set-cookie',cookie(s,604800)); headers.append('set-cookie',oauthStateCookie('',0)); return new Response(null,{status:302,headers});
 }
 
-async function delivery(request, env, url) {
+async function recordDeliveries(env, siteKey, delivered) {
+  const ids = new Set(delivered.map(item => item.value.balloonId).filter(value => typeof value === 'string' && value));
+  const legacy = delivered.filter(item => !item.value.balloonId);
+  if (legacy.length) {
+    const placeholders=legacy.map(() => '?').join(',');
+    const rows=(await env.DB.prepare(`SELECT b.id,b.slug FROM balloons b JOIN sites s ON s.id=b.site_id WHERE s.site_key=? AND b.slug IN (${placeholders})`).bind(siteKey,...legacy.map(item=>item.slug)).all()).results;
+    const bySlug=new Map(rows.map(row=>[row.slug,row.id]));
+    await Promise.all(legacy.map(item=>{const balloonId=bySlug.get(item.slug);if(!balloonId)return null;ids.add(balloonId);return env.CONBAL_KV.put(`b:${siteKey}:${item.slug}`,JSON.stringify({...item.value,balloonId}));}));
+  }
+  if (!ids.size) return;
+  const values=[...ids]; const placeholders=values.map(()=>'(?)').join(',');
+  await env.DB.prepare(`WITH delivered(balloon_id) AS (VALUES ${placeholders}) INSERT INTO balloon_delivery_counts (balloon_id,delivery_count,updated_at) SELECT delivered.balloon_id,1,strftime('%Y-%m-%dT%H:%M:%SZ','now') FROM delivered JOIN balloons ON balloons.id=delivered.balloon_id WHERE 1 ON CONFLICT(balloon_id) DO UPDATE SET delivery_count=balloon_delivery_counts.delivery_count+1,updated_at=excluded.updated_at`).bind(...values).run();
+}
+async function analytics(env, user, selectedSiteId) {
+  let selectedSite=null;
+  if(selectedSiteId) selectedSite=await ownerSite(env,user,selectedSiteId);
+  const sites=(await env.DB.prepare("SELECT s.id AS site_id,s.name,COALESCE(SUM(c.delivery_count),0) AS calls,MAX(c.updated_at) AS last_called_at FROM sites s LEFT JOIN balloons b ON b.site_id=s.id LEFT JOIN balloon_delivery_counts c ON c.balloon_id=b.id WHERE s.user_id=? GROUP BY s.id,s.name ORDER BY s.created_at DESC").bind(user.id).all()).results.map(site=>({...site,calls:Number(site.calls)||0}));
+  const account={calls:sites.reduce((sum,site)=>sum+site.calls,0),last_called_at:sites.map(site=>site.last_called_at).filter(Boolean).sort().at(-1)||null};
+  if(!selectedSite)return {account,sites,selected_site:null};
+  const balloons=(await env.DB.prepare("SELECT b.id AS balloon_id,b.slug,COALESCE(c.delivery_count,0) AS calls,c.updated_at AS last_called_at FROM balloons b LEFT JOIN balloon_delivery_counts c ON c.balloon_id=b.id WHERE b.site_id=? ORDER BY b.updated_at DESC").bind(selectedSite.id).all()).results.map(balloon=>({...balloon,calls:Number(balloon.calls)||0}));
+  const site=sites.find(item=>item.site_id===selectedSite.id)||{site_id:selectedSite.id,name:selectedSite.name,calls:0,last_called_at:null};
+  return {account,sites,selected_site:{...site,balloons}};
+}
+
+async function delivery(request, env, url, context) {
   if (request.method !== 'GET') return fail('Method not allowed', 405);
-  const parts = url.pathname.split('/').filter(Boolean); const siteKey = parts[1]; const slugs = (parts[2] || '').split(',').filter(validSlug).slice(0, 30);
+  const parts = url.pathname.split('/').filter(Boolean); const siteKey = parts[1]; const slugs = [...new Set((parts[2] || '').split(',').filter(validSlug))].slice(0, 30);
   if (parts.length !== 3 || !validSiteKey(siteKey) || !slugs.length) return fail('Not found', 404);
   const values = await Promise.all(slugs.map(slug => env.CONBAL_KV.get(`b:${siteKey}:${slug}`, 'json')));
-  const data = Object.fromEntries(slugs.map((slug, i) => [slug, values[i]]).filter(([, value]) => value));
+  const delivered=slugs.map((slug,i)=>({slug,value:values[i]})).filter(item=>item.value);
+  const data=Object.fromEntries(delivered.map(({slug,value})=>[slug,{html:value.html,css:value.css||'',size:value.size}]));
+  if(delivered.length){const work=recordDeliveries(env,siteKey,delivered).catch(error=>console.error('delivery counter failed',error));if(context?.waitUntil)context.waitUntil(work);else await work;}
   // Multi-balloon responses cannot be safely invalidated by Cache API when one
   // balloon changes, so always read the current published values from KV.
   return json(data, { headers: { 'access-control-allow-origin': '*', 'cache-control': 'no-store' } });
@@ -126,18 +152,19 @@ async function api(request, env, url) {
   const user = await requireUser(request, env);
   if (path === '/api/me' && method === 'GET') return json({ user });
   if (path === '/api/sites' && method === 'GET') return json((await env.DB.prepare('SELECT * FROM sites WHERE user_id=? ORDER BY created_at DESC').bind(user.id).all()).results);
+  if (path === '/api/analytics' && method === 'GET') return json(await analytics(env,user,url.searchParams.get('site_id')));
   if (path === '/api/sites' && method === 'POST') { const { name } = await body(request); if (typeof name !== 'string' || !name.trim() || name.length > 120) return fail('Enter a site name'); const site = { id: id(), name: name.trim(), site_key: token(9) }; await env.DB.prepare('INSERT INTO sites (id,user_id,name,site_key) VALUES (?,?,?,?)').bind(site.id,user.id,site.name,site.site_key).run(); return json(site,{status:201}); }
   let match = path.match(/^\/api\/sites\/([^/]+)$/);
   if (match && method === 'PATCH') { const site=await ownerSite(env,user,match[1]), {name}=await body(request); if(typeof name !== 'string'||!name.trim()||name.length>120)return fail('Enter a site name'); await env.DB.prepare('UPDATE sites SET name=? WHERE id=?').bind(name.trim(),site.id).run(); return json({ok:true}); }
-  if (match && method === 'DELETE') { const site=await ownerSite(env,user,match[1]); const bs=(await env.DB.prepare('SELECT slug FROM balloons WHERE site_id=?').bind(site.id).all()).results; await Promise.all(bs.map(b=>env.CONBAL_KV.delete(`b:${site.site_key}:${b.slug}`))); await env.DB.batch([env.DB.prepare('DELETE FROM balloons WHERE site_id=?').bind(site.id),env.DB.prepare('DELETE FROM sites WHERE id=?').bind(site.id)]); return json({ok:true}); }
+  if (match && method === 'DELETE') { const site=await ownerSite(env,user,match[1]); const bs=(await env.DB.prepare('SELECT slug FROM balloons WHERE site_id=?').bind(site.id).all()).results; await Promise.all(bs.map(b=>env.CONBAL_KV.delete(`b:${site.site_key}:${b.slug}`))); await env.DB.batch([env.DB.prepare('DELETE FROM balloon_delivery_counts WHERE balloon_id IN (SELECT id FROM balloons WHERE site_id=?)').bind(site.id),env.DB.prepare('DELETE FROM balloons WHERE site_id=?').bind(site.id),env.DB.prepare('DELETE FROM sites WHERE id=?').bind(site.id)]); return json({ok:true}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/import$/);
   if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const imported=csvImportRows(await csvBody(request)); const existing=(await env.DB.prepare('SELECT slug FROM balloons WHERE site_id=?').bind(site.id).all()).results.map(row=>row.slug); const existingSlugs=new Set(existing); for(const balloon of imported)if(existingSlugs.has(balloon.slug))return fail(`Row ${balloon.sourceRow}: a balloon with slug "${balloon.slug}" already exists for this site`,409); const balloons=imported.map(({sourceRow,...balloon})=>({id:id(),site_id:site.id,...balloon,status:'draft'})); try{await env.DB.batch(balloons.map(balloon=>env.DB.prepare("INSERT INTO balloons (id,site_id,slug,title,html,css,size,status) VALUES (?,?,?,?,?,?,?,?)").bind(balloon.id,balloon.site_id,balloon.slug,balloon.title,balloon.html,balloon.css,balloon.size,balloon.status)));}catch(error){if(isBalloonSlugConflict(error))return fail('A balloon with one of these slugs was created concurrently; no balloons were imported',409);console.error('balloon import failed',error);return fail('Unable to import balloons; no changes were made',500);} return json({imported:balloons.length,items:balloons},{status:201}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons$/);
   if (match && method === 'GET') { const site=await ownerSite(env,user,match[1]); return json((await env.DB.prepare('SELECT * FROM balloons WHERE site_id=? ORDER BY updated_at DESC').bind(site.id).all()).results); }
   if (match && method === 'POST') { const site=await ownerSite(env,user,match[1]); const b={id:id(),site_id:site.id,...cleanBalloon(await body(request))}; try { await env.DB.prepare('INSERT INTO balloons (id,site_id,slug,title,html,css,size) VALUES (?,?,?,?,?,?,?)').bind(b.id,b.site_id,b.slug,b.title,b.html,b.css,b.size).run(); } catch{return fail('That slug already exists for this site',409)} return json(b,{status:201}); }
   match = path.match(/^\/api\/balloons\/([^/]+)(?:\/(publish|unpublish))?$/);
-  if (match) { const balloon=await ownerBalloon(env,user,match[1]); if(match[2]==='publish'&&method==='POST'){await publish(env,balloon);await env.DB.prepare("UPDATE balloons SET status='published',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(match[2]==='unpublish'&&method==='POST'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.prepare("UPDATE balloons SET status='draft',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(!match[2]&&method==='PATCH'){const b=cleanBalloon(await body(request));try{await env.DB.prepare("UPDATE balloons SET title=?,slug=?,html=?,css=?,size=?,updated_at=datetime('now') WHERE id=?").bind(b.title,b.slug,b.html,b.css,b.size,balloon.id).run()}catch{return fail('That slug already exists for this site',409)}if(balloon.status==='published'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await publish(env,{...balloon,...b})}return json({ok:true})} if(!match[2]&&method==='DELETE'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.prepare('DELETE FROM balloons WHERE id=?').bind(balloon.id).run();return json({ok:true})} }
+  if (match) { const balloon=await ownerBalloon(env,user,match[1]); if(match[2]==='publish'&&method==='POST'){await publish(env,balloon);await env.DB.prepare("UPDATE balloons SET status='published',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(match[2]==='unpublish'&&method==='POST'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.prepare("UPDATE balloons SET status='draft',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(!match[2]&&method==='PATCH'){const b=cleanBalloon(await body(request));try{await env.DB.prepare("UPDATE balloons SET title=?,slug=?,html=?,css=?,size=?,updated_at=datetime('now') WHERE id=?").bind(b.title,b.slug,b.html,b.css,b.size,balloon.id).run()}catch{return fail('That slug already exists for this site',409)}if(balloon.status==='published'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await publish(env,{...balloon,...b})}return json({ok:true})} if(!match[2]&&method==='DELETE'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.batch([env.DB.prepare('DELETE FROM balloon_delivery_counts WHERE balloon_id=?').bind(balloon.id),env.DB.prepare('DELETE FROM balloons WHERE id=?').bind(balloon.id)]);return json({ok:true})} }
   return fail('Not found', 404);
 }
 function secure(response) { const h=new Headers(response.headers);h.set('x-content-type-options','nosniff');h.set('strict-transport-security','max-age=31536000; includeSubDomains');return new Response(response.body,{status:response.status,statusText:response.statusText,headers:h}); }
-export default { async fetch(request, env) { const url=new URL(request.url), host=request.headers.get('host') || url.host; if (host==='www.conbal.us' || (host==='conbal.us' && url.protocol==='http:')) { url.protocol='https:';url.hostname='conbal.us';return Response.redirect(url,301); } try { let response; if(url.pathname.startsWith('/b/'))response=await delivery(request,env,url); else if(url.pathname.startsWith('/api/'))response=await api(request,env,url); else response=await env.ASSETS.fetch(request); return secure(response); } catch(error) { return secure(fail(error.message||'Server error',error.status||500)); } } };
+export default { async fetch(request, env, context) { const url=new URL(request.url), host=request.headers.get('host') || url.host; if (host==='www.conbal.us' || (host==='conbal.us' && url.protocol==='http:')) { url.protocol='https:';url.hostname='conbal.us';return Response.redirect(url,301); } try { let response; if(url.pathname.startsWith('/b/'))response=await delivery(request,env,url,context); else if(url.pathname.startsWith('/api/'))response=await api(request,env,url); else response=await env.ASSETS.fetch(request); return secure(response); } catch(error) { return secure(fail(error.message||'Server error',error.status||500)); } } };

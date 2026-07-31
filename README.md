@@ -12,11 +12,14 @@ Conbal delivers owner-authored HTML/CSS content balloons to any site. Cloudflare
    npx wrangler d1 execute conbal-db --remote --file=schema.sql
    ```
 
-   For an existing pre-Google-login database, apply the upgrade instead:
+   Existing databases must apply every numbered migration they have not already received, in order. A database that predates Google login needs both upgrades:
 
    ```sh
    npx wrangler d1 execute conbal-db --remote --file=migrations/001_google_oauth.sql
+   npx wrangler d1 execute conbal-db --remote --file=migrations/002_delivery_analytics.sql
    ```
+
+   A database already upgraded through `001_google_oauth.sql` needs only `002_delivery_analytics.sql` before deploying the analytics Worker.
 
 4. Optionally create `.dev.vars` from `.dev.vars.example` and set `SIGNUP_INVITE_CODE` to restrict account creation.
 5. Run `npm run validate`; it intentionally fails while the binding IDs are placeholders.
@@ -40,6 +43,10 @@ The login page sends an invite code to Conbal over `POST`, not in a URL. When `S
 Each account can own multiple sites. The dashboard site selector keeps balloon creation, listing, and CSV imports scoped to the selected site.
 
 Download `/admin/example-balloons.csv` from the dashboard and keep the required columns `title,slug,size,html,css`. The dashboard also provides `/admin/content-balloon-csv-llm-guide.md`, an exhaustive, downloadable generation contract and prompt template for other LLMs. Imports accept standard quoted CSV fields, including commas, doubled quotes, and embedded newlines. A file may contain up to 100 balloons and 512 KB; the whole import is validated before one atomic write. Imported balloons are always drafts and never overwrite or publish existing slugs.
+
+## Delivery analytics
+
+Conbal counts each successfully returned published balloon once per public delivery request. Repeated instances of the same slug in one loader request count once; missing, draft, and unpublished balloons do not count. Balloon totals roll up additively by configured site and account. Recording is asynchronous and best-effort so analytics never delay content delivery. Counts are delivery calls—not unique people—and may include reloads, bots, and direct API clients.
 
 The public balloon endpoint, site keys, and owner-provided balloon markup are intentionally public. Treat the HTML/CSS as trusted only when it is authored by the site owner.
 
