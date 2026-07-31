@@ -39,7 +39,7 @@ The login page sends an invite code to Conbal over `POST`, not in a URL. When `S
 
 Each account can own multiple sites. The dashboard site selector keeps balloon creation, listing, and CSV imports scoped to the selected site.
 
-Download `/admin/example-balloons.csv` from the dashboard and keep the required columns `title,slug,size,html,css`. Imports accept standard quoted CSV fields, including commas, doubled quotes, and embedded newlines. A file may contain up to 100 balloons and 512 KB; the whole import is validated before one atomic write. Imported balloons are always drafts and never overwrite or publish existing slugs.
+Download `/admin/example-balloons.csv` from the dashboard and keep the required columns `title,slug,size,html,css`. The dashboard also provides `/admin/content-balloon-csv-llm-guide.md`, an exhaustive, downloadable generation contract and prompt template for other LLMs. Imports accept standard quoted CSV fields, including commas, doubled quotes, and embedded newlines. A file may contain up to 100 balloons and 512 KB; the whole import is validated before one atomic write. Imported balloons are always drafts and never overwrite or publish existing slugs.
 
 The public balloon endpoint, site keys, and owner-provided balloon markup are intentionally public. Treat the HTML/CSS as trusted only when it is authored by the site owner.
 
