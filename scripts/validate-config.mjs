@@ -41,6 +41,29 @@ for (const [expression, description] of [
   [/CREATE INDEX idx_balloons_site ON balloons\(site_id\)/i, 'schema.sql must index balloons.site_id.'],
 ]) requireMatch(schema, expression, description);
 
+let examples;
+try {
+  examples = JSON.parse(await read('examples/demo-balloons.json'));
+} catch (error) {
+  failures.push(`examples/demo-balloons.json must be valid JSON: ${error.message}`);
+}
+
+if (examples) {
+  if (!/^[A-Za-z0-9_-]{12}$/.test(examples.siteKey || '')) failures.push('The live example site key must be 12 URL-safe characters.');
+  if (!Array.isArray(examples.balloons) || examples.balloons.length !== 3) failures.push('The live example manifest must contain exactly three balloons.');
+  const slugs = new Set();
+  for (const balloon of examples.balloons || []) {
+    if (!/^[a-z0-9-]{1,80}$/.test(balloon.slug || '')) failures.push(`Invalid live example slug: ${balloon.slug || '(missing)'}.`);
+    if (slugs.has(balloon.slug)) failures.push(`Duplicate live example slug: ${balloon.slug}.`);
+    slugs.add(balloon.slug);
+    if (!['responsive', '300x250', '336x280', '728x90', '160x600', '320x100'].includes(balloon.size)) failures.push(`Invalid live example size for ${balloon.slug}.`);
+    if (!balloon.title || !balloon.html || typeof balloon.css !== 'string') failures.push(`Incomplete live example content for ${balloon.slug}.`);
+  }
+  const homepage = await read('public/index.html');
+  if (![...slugs].every(slug => homepage.includes(`data-conbal=\"${slug}\"`))) failures.push('The homepage must embed every balloon in the live example manifest.');
+  if (!homepage.includes(`data-conbal-site=\"${examples.siteKey}\"`)) failures.push('The homepage live example site key must match the manifest.');
+}
+
 if (failures.length) {
   console.error('Conbal configuration validation failed:\n' + failures.map(item => `- ${item}`).join('\n'));
   process.exitCode = 1;
