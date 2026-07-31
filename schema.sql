@@ -12,5 +12,10 @@ CREATE TABLE balloons (
   status TEXT NOT NULL DEFAULT 'draft', updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(site_id, slug)
 );
+CREATE TABLE balloon_delivery_counts (
+  balloon_id TEXT PRIMARY KEY REFERENCES balloons(id) ON DELETE CASCADE,
+  delivery_count INTEGER NOT NULL DEFAULT 0 CHECK (delivery_count >= 0),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
 CREATE INDEX idx_sites_user ON sites(user_id);
 CREATE INDEX idx_balloons_site ON balloons(site_id);

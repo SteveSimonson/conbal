@@ -9,6 +9,8 @@ const api = async (path, options = {}) => {
 };
 const say = message => { $('#message').textContent = message; };
 const snippet = siteKey => `<div data-conbal-site="${siteKey}" data-conbal="SLUG" data-size="300x250"></div>\n<script src="https://conbal.us/embed.js" defer></script>`;
+const count = value => new Intl.NumberFormat().format(Number(value) || 0);
+const calledAt = value => { if (!value) return 'Never called'; const date = new Date(value); if (Number.isNaN(date.getTime())) return 'Never called'; const iso = date.toISOString(); return `<time datetime="${esc(iso)}" title="${esc(iso)}">${esc(new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date))}</time>`; };
 let selectedSiteId = '';
 
 async function copy(text) { try { await navigator.clipboard.writeText(text); say('Embed code copied. Replace SLUG with your balloon slug.'); } catch { say('Could not copy automatically. Select the embed code and copy it manually.'); } }
@@ -17,17 +19,19 @@ async function load() {
   if (!sites.some(site => site.id === selectedSiteId)) selectedSiteId = sites[0]?.id || '';
   if (!selectedSiteId) { $('#sites').innerHTML = '<p>Create a site to start adding balloons.</p>'; return; }
   const site = sites.find(item => item.id === selectedSiteId);
-  $('#sites').innerHTML = `<section class="site"><label>Your site <select id="site-picker">${sites.map(item => `<option value="${esc(item.id)}" ${item.id === site.id ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}</select></label><h2>${esc(site.name)}</h2><p>Site key: <code>${esc(site.site_key)}</code></p><label>Embed code</label><pre><code>${esc(snippet(site.site_key))}</code></pre><button type="button" data-copy="${esc(site.site_key)}">Copy embed code</button><button type="button" data-add="${esc(site.id)}">New balloon</button><section class="import"><h3>Import draft balloons</h3><p><a href="/admin/example-balloons.csv" download>Download the example CSV</a> · <a href="/admin/content-balloon-csv-llm-guide.md" download>Download the LLM generation guide</a></p><label>CSV file <input id="csv-file" type="file" accept=".csv,text/csv"></label><button type="button" id="import-csv" disabled>Import CSV</button><p class="help">Rows are imported as drafts. Required columns: title, slug, size, html, css.</p></section><div id="b-${esc(site.id)}"></div></section>`;
-  await renderBalloons(site.id);
+  const analytics = await api(`/analytics?site_id=${encodeURIComponent(site.id)}`), selected = analytics.selected_site;
+  $('#sites').innerHTML = `<section class="site"><label>Your site <select id="site-picker">${sites.map(item => `<option value="${esc(item.id)}" ${item.id === site.id ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}</select></label><h2>${esc(site.name)}</h2><section class="analytics" aria-label="Delivery activity"><h3>Delivery activity</h3><div class="metric-grid"><div><strong>${count(analytics.account.calls)}</strong><span>Account calls</span></div><div><strong>${count(selected.calls)}</strong><span>Selected-site calls</span></div><div><strong>${calledAt(selected.last_called_at)}</strong><span>Selected site last called</span></div></div><h4>All sites</h4><ul class="site-stats">${analytics.sites.map(item => `<li ${item.site_id === site.id ? 'aria-current="true"' : ''}><strong>${esc(item.name)}</strong><span>${count(item.calls)} calls · Last called: ${calledAt(item.last_called_at)}</span></li>`).join('')}</ul>${analytics.account.calls ? '' : '<p class="help">No delivery calls yet. Publish a balloon and add its embed code to start tracking.</p>'}<p class="help">Each successfully returned published balloon counts once per public request. Totals are delivery calls, not unique people, and may include reloads, bots, and direct API clients.</p></section><p>Site key: <code>${esc(site.site_key)}</code></p><label>Embed code</label><pre><code>${esc(snippet(site.site_key))}</code></pre><button type="button" data-copy="${esc(site.site_key)}">Copy embed code</button><button type="button" data-add="${esc(site.id)}">New balloon</button><section class="import"><h3>Import draft balloons</h3><p><a href="/admin/example-balloons.csv" download>Download the example CSV</a> · <a href="/admin/content-balloon-csv-llm-guide.md" download>Download the LLM generation guide</a></p><label>CSV file <input id="csv-file" type="file" accept=".csv,text/csv"></label><button type="button" id="import-csv" disabled>Import CSV</button><p class="help">Rows are imported as drafts. Required columns: title, slug, size, html, css.</p></section><div id="b-${esc(site.id)}"></div></section>`;
+  await renderBalloons(site.id, selected.balloons);
   document.querySelectorAll('[data-add]').forEach(button => { button.onclick = () => editor(button.dataset.add); });
   document.querySelectorAll('[data-copy]').forEach(button => { button.onclick = () => copy(snippet(button.dataset.copy)); });
   $('#site-picker').onchange = event => { selectedSiteId = event.target.value; load().catch(error => say(error.message)); };
   $('#csv-file').onchange = event => { $('#import-csv').disabled = !event.target.files?.length; };
   $('#import-csv').onclick = () => importCsv(site.id);
 }
-async function renderBalloons(siteId) {
+async function renderBalloons(siteId, deliveryStats = []) {
   const balloons = await api(`/sites/${siteId}/balloons`);
-  $(`#b-${siteId}`).innerHTML = balloons.map(balloon => `<div class="balloon"><strong>${esc(balloon.title)}</strong> — ${esc(balloon.slug)} (${esc(balloon.status)}) <button type="button" data-edit="${esc(balloon.id)}">Edit</button></div>`).join('');
+  const byId = new Map(deliveryStats.map(item => [item.balloon_id, item]));
+  $(`#b-${siteId}`).innerHTML = balloons.map(balloon => { const stats = byId.get(balloon.id) || { calls: 0, last_called_at: null }; return `<div class="balloon"><strong>${esc(balloon.title)}</strong> — ${esc(balloon.slug)} (${esc(balloon.status)}) <span class="meta">Calls: ${count(stats.calls)} · Last called: ${calledAt(stats.last_called_at)}</span><button type="button" data-edit="${esc(balloon.id)}">Edit</button></div>`; }).join('') || '<p>No balloons yet. Create or import a draft to get started.</p>';
   document.querySelectorAll('[data-edit]').forEach(button => { button.onclick = () => editor(siteId, button.dataset.edit); });
 }
 function preview(form) { const frame = form.querySelector('iframe'); const values = Object.fromEntries(new FormData(form)); frame.srcdoc = `<style>body{margin:0} ${values.css || ''}</style>${values.html || ''}`; }

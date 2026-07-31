@@ -35,6 +35,8 @@ for (const [expression, description] of [
   [/site_key TEXT UNIQUE NOT NULL/i, 'sites.site_key must remain unique and required.'],
   [/CREATE TABLE balloons\b/i, 'schema.sql must create balloons.'],
   [/UNIQUE\s*\(\s*site_id\s*,\s*slug\s*\)/i, 'balloons must enforce unique slugs per site.'],
+  [/CREATE TABLE balloon_delivery_counts\b/i, 'schema.sql must create balloon delivery counters.'],
+  [/delivery_count INTEGER NOT NULL DEFAULT 0/i, 'balloon delivery counts must default to zero.'],
   [/CREATE INDEX idx_sites_user ON sites\(user_id\)/i, 'schema.sql must index sites.user_id.'],
   [/CREATE INDEX idx_balloons_site ON balloons\(site_id\)/i, 'schema.sql must index balloons.site_id.'],
 ]) requireMatch(schema, expression, description);
