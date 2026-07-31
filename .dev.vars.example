@@ -1,2 +1,4 @@
 # Optional: require this code at signup to gate public registrations.
 # SIGNUP_INVITE_CODE=replace-me
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
+GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret

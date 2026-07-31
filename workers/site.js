@@ -8,10 +8,12 @@ const b64 = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes)));
 const unb64 = value => Uint8Array.from(atob(value), x => x.charCodeAt(0));
 
 async function hashPassword(password, saved) {
-  const iterations = 210000;
+  const iterations = saved ? Number(saved.match(/^pbkdf2:(\d+)\./)?.[1]) : 100000;
+  if (!Number.isInteger(iterations) || iterations < 100000 || iterations > 500000) throw new Error('Unsupported password hash');
   const salt = saved ? unb64(saved.split('.')[1]) : crypto.getRandomValues(new Uint8Array(16));
-  const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', iterations, salt }, key, 256);
+  const passwordBytes = encoder.encode(password);
+  const key = await crypto.subtle.importKey('raw', passwordBytes.buffer, { name: 'PBKDF2' }, false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', iterations, salt: salt.buffer }, key, 256);
   return `pbkdf2:${iterations}.${b64(salt)}.${b64(bits)}`;
 }
 async function verifyPassword(password, stored) { return (await hashPassword(password, stored)) === stored; }
@@ -20,7 +22,10 @@ async function body(request) { try { return await request.json(); } catch { thro
 function validEmail(email) { return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email); }
 function validSlug(slug) { return typeof slug === 'string' && /^[a-z0-9-]{1,80}$/.test(slug); }
 function validSiteKey(siteKey) { return typeof siteKey === 'string' && /^[A-Za-z0-9_-]{12}$/.test(siteKey); }
+function isEmailConflict(error) { return /UNIQUE constraint failed: users\.email/i.test(String(error?.message || error)); }
 function cookie(value, age = 0) { return `conbal_session=${encodeURIComponent(value || '')}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`; }
+function oauthStateCookie(value, age = 0) { return `conbal_oauth_state=${encodeURIComponent(value || '')}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`; }
+function googleCallbackUrl(url) { return ['localhost', '127.0.0.1'].includes(url.hostname) ? `${url.origin}/api/auth/google/callback` : 'https://conbal.us/api/auth/google/callback'; }
 async function session(request, env) { const value = cookies(request).conbal_session; if (!value) return null; const data = await env.CONBAL_KV.get(`s:${value}`, 'json'); if (!data) return null; await env.CONBAL_KV.put(`s:${value}`, JSON.stringify(data), { expirationTtl: 604800 }); return data; }
 async function requireUser(request, env) { const s = await session(request, env); if (!s) throw Object.assign(new Error('Login required'), { status: 401 }); return s; }
 async function ownerSite(env, user, siteId) { const site = await env.DB.prepare('SELECT * FROM sites WHERE id=? AND user_id=?').bind(siteId, user.id).first(); if (!site) throw Object.assign(new Error('Site not found'), { status: 404 }); return site; }
@@ -33,6 +38,26 @@ function cleanBalloon(data) {
 async function publish(env, balloon) {
   const key = `b:${balloon.site_key}:${balloon.slug}`;
   await env.CONBAL_KV.put(key, JSON.stringify({ html: balloon.html, css: balloon.css, size: balloon.size }));
+}
+async function createSession(env, user) { const value=token(16); await env.CONBAL_KV.put(`s:${value}`,JSON.stringify({id:user.id,email:user.email}),{expirationTtl:604800}); return value; }
+async function googleAuth(request, env, url) {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return fail('Google login is not configured yet', 503);
+  const callback=googleCallbackUrl(url);
+  if (url.pathname === '/api/auth/google') {
+    const inviteCode=request.method==='POST' ? (await body(request)).inviteCode : null;
+    const state=token(24), inviteAuthorized=!env.SIGNUP_INVITE_CODE||inviteCode===env.SIGNUP_INVITE_CODE;
+    await env.CONBAL_KV.put(`oauth:${state}`,JSON.stringify({inviteAuthorized}),{expirationTtl:600});
+    const auth=new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    auth.search=new URLSearchParams({client_id:env.GOOGLE_CLIENT_ID,redirect_uri:callback,response_type:'code',scope:'openid email profile',state,prompt:'select_account'});
+    const headers={'set-cookie':oauthStateCookie(state,600)};
+    return request.method==='POST' ? json({location:auth.toString()},{headers}) : new Response(null,{status:302,headers:{...headers,location:auth.toString()}});
+  }
+  const code=url.searchParams.get('code'), state=url.searchParams.get('state'), expectedState=cookies(request).conbal_oauth_state;
+  const oauthState=!code||!state||!expectedState||state!==expectedState?null:await env.CONBAL_KV.get(`oauth:${state}`,'json'); if(!oauthState) return fail('Google login expired or was invalid',400); await env.CONBAL_KV.delete(`oauth:${state}`);
+  const tokens=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({code,client_id:env.GOOGLE_CLIENT_ID,client_secret:env.GOOGLE_CLIENT_SECRET,redirect_uri:callback,grant_type:'authorization_code'})}); if(!tokens.ok)return fail('Google could not complete sign-in',502);
+  let tokenData; try { tokenData=await tokens.json(); } catch { return fail('Google returned an invalid sign-in response',502); } if(typeof tokenData.access_token!=='string'||!tokenData.access_token)return fail('Google returned an invalid sign-in response',502);
+  const profileResponse=await fetch('https://openidconnect.googleapis.com/v1/userinfo',{headers:{authorization:`Bearer ${tokenData.access_token}`}}); if(!profileResponse.ok)return fail('Google could not retrieve your profile',502); let profile; try { profile=await profileResponse.json(); } catch { return fail('Google returned an invalid profile',502); }
+  const email=typeof profile.email==='string' ? profile.email.trim().toLowerCase() : ''; if(typeof profile.sub!=='string'||!profile.sub||!validEmail(email)||profile.email_verified!==true)return fail('Google did not provide a verified email',403); let user=await env.DB.prepare('SELECT id,email FROM users WHERE google_id=?').bind(profile.sub).first(); if(!user){ if(!oauthState.inviteAuthorized)return fail('A valid invite code is required',403); user={id:id(),email}; try{await env.DB.prepare('INSERT INTO users (id,email,password_hash,google_id) VALUES (?,?,?,?)').bind(user.id,user.email,await hashPassword(token(24)),profile.sub).run()}catch{return fail('An account already exists with this email; sign in with email first',409)} } const s=await createSession(env,user); const headers=new Headers({location:`${new URL(callback).origin}/admin/`}); headers.append('set-cookie',cookie(s,604800)); headers.append('set-cookie',oauthStateCookie('',0)); return new Response(null,{status:302,headers});
 }
 
 async function delivery(request, env, url) {
@@ -49,11 +74,15 @@ async function delivery(request, env, url) {
 async function api(request, env, url) {
   const path = url.pathname, method = request.method;
   if (path === '/api/health') return json({ ok: Boolean(env.DB && env.CONBAL_KV) });
+  if ((path === '/api/auth/google' && (method === 'GET' || method === 'POST')) || (path === '/api/auth/google/callback' && method === 'GET')) return googleAuth(request,env,url);
   if (path === '/api/signup' && method === 'POST') {
     const { email, password, inviteCode } = await body(request); const normalized = String(email || '').trim().toLowerCase();
     if (!validEmail(normalized) || typeof password !== 'string' || password.length < 8) return fail('Use a valid email and password of at least 8 characters');
     if (env.SIGNUP_INVITE_CODE && inviteCode !== env.SIGNUP_INVITE_CODE) return fail('A valid invite code is required', 403);
-    const user = { id: id(), email: normalized }; try { await env.DB.prepare('INSERT INTO users (id,email,password_hash) VALUES (?,?,?)').bind(user.id, user.email, await hashPassword(password)).run(); } catch { return fail('That email is already registered', 409); }
+    const user = { id: id(), email: normalized };
+    let passwordHash;
+    try { passwordHash = await hashPassword(password); } catch (error) { console.error('password hash failed', error); return fail('Unable to secure the account', 500); }
+    try { await env.DB.prepare('INSERT INTO users (id,email,password_hash) VALUES (?,?,?)').bind(user.id, user.email, passwordHash).run(); } catch (error) { if (isEmailConflict(error)) return fail('That email is already registered', 409); console.error('signup insert failed', error); return fail('Unable to create the account', 500); }
     const s = token(16); await env.CONBAL_KV.put(`s:${s}`, JSON.stringify(user), { expirationTtl: 604800 }); return json({ user }, { status: 201, headers: { 'set-cookie': cookie(s, 604800) } });
   }
   if (path === '/api/login' && method === 'POST') {

@@ -1,1 +1,54 @@
-<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conbal login</title><style>body{max-width:360px;margin:10vh auto;font:16px system-ui}input,button{box-sizing:border-box;width:100%;padding:10px;margin:6px 0}#message{color:#b42318}</style><h1>Conbal</h1><p id="message"></p><form id="auth"><input name="email" type="email" placeholder="Email" required><input name="password" type="password" placeholder="Password (8+ characters)" required><input name="inviteCode" placeholder="Invite code (if required)"><button name="action" value="login">Log in</button><button name="action" value="signup">Create account</button></form><script>document.querySelector('#auth').onsubmit=async e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));const r=await fetch('/api/'+e.submitter.value,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(d)});if(r.ok)location='/admin/';else document.querySelector('#message').textContent=(await r.json()).error||'Something went wrong';}</script>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sign in to Conbal</title>
+  <style>
+    body{max-width:360px;margin:10vh auto;padding:0 18px;font:16px system-ui;color:#172033}input,button{box-sizing:border-box;width:100%;padding:10px;margin:6px 0}label{display:block;margin-top:10px}button{cursor:pointer}button:focus-visible,input:focus-visible{outline:3px solid #3858d6;outline-offset:2px}#message{min-height:1.5em;color:#b42318}.or{text-align:center;color:#667085}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Conbal</h1>
+    <p id="message" role="alert" aria-live="assertive"></p>
+    <button id="google-login" type="button">Continue with Google</button>
+    <p class="or">or</p>
+    <form id="auth">
+      <label>Email <input name="email" type="email" autocomplete="email" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" minlength="8" required></label>
+      <label>Invite code <input name="inviteCode" autocomplete="off" aria-describedby="invite-help"></label>
+      <small id="invite-help">Required only when account creation is invite-only.</small>
+      <button name="action" value="login">Log in</button>
+      <button name="action" value="signup">Create account</button>
+    </form>
+  </main>
+  <script>
+    const form=document.querySelector('#auth'), message=document.querySelector('#message'), googleLogin=document.querySelector('#google-login');
+    googleLogin.onclick=async()=>{
+      message.textContent=''; googleLogin.disabled=true; googleLogin.textContent='Please wait…';
+      try{
+        const response=await fetch('/api/auth/google',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({inviteCode:new FormData(form).get('inviteCode')})});
+        const data=await response.json().catch(()=>({}));
+        if(response.ok&&data.location)location.assign(data.location);
+        else message.textContent=data.error||'Unable to start Google sign-in. Please try again.';
+      }catch{message.textContent='Unable to reach Conbal. Check your connection and try again.'}
+      finally{googleLogin.disabled=false;googleLogin.textContent='Continue with Google'}
+    };
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      const submitter=event.submitter;
+      if(!submitter)return;
+      const original=submitter.textContent;
+      message.textContent=''; submitter.disabled=true; submitter.textContent='Please wait…';
+      try{
+        const response=await fetch('/api/'+submitter.value,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(form)))});
+        const data=await response.json().catch(()=>({}));
+        if(response.ok)location.assign('/admin/');
+        else message.textContent=data.error||'Something went wrong. Please try again.';
+      }catch{message.textContent='Unable to reach Conbal. Check your connection and try again.'}
+      finally{submitter.disabled=false;submitter.textContent=original}
+    };
+  </script>
+</body>
+</html>
