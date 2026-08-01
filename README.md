@@ -60,7 +60,7 @@ metadata defaults to `did_you_know` and `general`.
 Adaptive pages can request one randomized deck per page load:
 
 ```http
-GET /b/{siteKey}/_sample?nonce={requestId}&slots={urlEncodedJson}
+GET /b/{siteKey}/_sample?nonce={requestId}&slots={urlEncodedJson}&exclude_slugs={commaSeparatedRecentSlugs}
 ```
 
 `slots` is a JSON array of one to eight objects with `id`, `size`, `topics`,
@@ -69,8 +69,11 @@ the exact requested size, prefers topic matches, falls back to the `general`
 topic, and returns `{ "slots": { "slot-id": { "slug", "size",
 "editorial_type", "html", "css" } } }`. Selection uses server-side WebCrypto
 randomness, responses are `no-store`, and the nonce prevents intermediaries
-from coalescing page-load requests. Missing candidates are omitted so host
-pages can fail closed. The legacy explicit-slug endpoint remains unchanged.
+from coalescing page-load requests. Hosts may send up to 30 validated slugs in
+`exclude_slugs`; compatible fresh balloons are preferred, while excluded items
+remain fallback-only so a small content pool does not create an empty slot.
+Missing candidates are omitted so host pages can fail closed. The legacy
+explicit-slug endpoint remains unchanged.
 
 ## Delivery analytics
 
