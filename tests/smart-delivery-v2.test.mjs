@@ -109,7 +109,8 @@ test('v2 returns the structured 2.0 contract with bounded plain text only', asyn
   assert.doesNotMatch(JSON.stringify(body), /<[^>]*>|html|css|color|background|alert|Stale KV/);
   assert.deepEqual(counted, [['safe']]);
   assert.equal(queries.length, 1);
-  assert.match(queries[0], /LIMIT 100/);
+  assert.match(queries[0], /ROW_NUMBER/);
+  assert.match(queries[0], /candidate_rank<=16/);
 });
 
 test('v2 assignments are stable across retries and database row order', async () => {
@@ -153,6 +154,21 @@ test('v2 assigns the whole deck globally so a flexible slot cannot starve a spec
 
   assert.equal(assignments.alpha.slug, 'only-generic');
   assert.equal(assignments.zulu.slug, 'home-exact');
+});
+
+test('v2 maximizes fill count before relevance strength', async () => {
+  const exact = { id: 'two-topic', slug: 'two-topic', title: 'Exact', html: '<strong>Two-topic fact</strong><p>This candidate matches both requested topics for the flexible slot.</p>', editorial_type: 'did_you_know', topics: 'home,care' };
+  const genericOtherType = { id: 'generic-care', slug: 'generic-care', title: 'Generic', html: '<strong>Generic fallback</strong><p>This candidate can fill only the flexible editorial-type request.</p>', editorial_type: 'fun_fact', topics: 'general' };
+  const { env } = fakeEnvironment([exact, genericOtherType]);
+  const response = await worker.fetch(v2Request(requestBody({ slots: [
+    { ...baseSlot, id: 'flexible', topics: ['home', 'care'], editorial_types: ['did_you_know', 'fun_fact'] },
+    { ...baseSlot, id: 'constrained', topics: ['home'], editorial_types: ['did_you_know'] },
+  ] })), env, {});
+  const assignments = (await response.json()).assignments;
+
+  assert.equal(Object.keys(assignments).length, 2);
+  assert.equal(assignments.constrained.slug, 'two-topic');
+  assert.equal(assignments.flexible.slug, 'generic-care');
 });
 
 test('repeat_policy omit honors exclusions and leaves unfillable slots absent', async () => {
@@ -230,6 +246,23 @@ test('v2 HTML extraction does not leak attributes containing greater-than signs'
   assert.doesNotMatch(JSON.stringify(copy), /private|attribute|secret|value/);
 });
 
+test('v2 nested unsafe blocks never leak hidden descendants', async () => {
+  const source = {
+    id: 'nested-unsafe',
+    slug: 'nested-unsafe',
+    title: 'Safe fallback headline',
+    html: '<svg><svg></svg><div>PRIVATE nested vector copy must stay hidden.</div></svg><p>Visible body copy remains available to the host.</p>',
+    editorial_type: 'did_you_know',
+    topics: 'home',
+  };
+  const { env } = fakeEnvironment([source]);
+  const response = await worker.fetch(v2Request(), env, {});
+  const copy = (await response.json()).assignments.primary.content;
+
+  assert.deepEqual(copy, { headline: 'Safe fallback headline', body: 'Visible body copy remains available to the host.' });
+  assert.doesNotMatch(JSON.stringify(copy), /PRIVATE|vector/);
+});
+
 test('v2 returns an empty deck when published inventory cannot fill a request', async () => {
   const { env, counted } = fakeEnvironment([
     { ...inventory[0], status: 'draft' },
@@ -283,6 +316,31 @@ test('v2 bounds request bodies and returns CORS-readable client errors', async (
     assert.equal(response.headers.get('access-control-allow-origin'), '*');
     assert.match(response.headers.get('cache-control'), /no-store/);
   }
+});
+
+test('v2 stops reading an oversized stream as soon as the byte cap is crossed', async () => {
+  const { env } = fakeEnvironment(inventory);
+  let pulls = 0;
+  let cancelled = false;
+  const stream = new ReadableStream({
+    pull(controller) {
+      pulls += 1;
+      controller.enqueue(new Uint8Array(8192));
+      if (pulls >= 20) controller.close();
+    },
+    cancel() { cancelled = true; },
+  });
+  const request = new Request(`https://conbal.us/v2/b/${siteKey}/sample`, {
+    body: stream,
+    duplex: 'half',
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  const response = await worker.fetch(request, env, {});
+
+  assert.equal(response.status, 413);
+  assert.equal(cancelled, true);
+  assert.ok(pulls < 20);
 });
 
 test('v2 permits the JSON POST CORS preflight used by host sites', async () => {

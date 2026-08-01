@@ -110,10 +110,13 @@ allowed by the slot are candidates. Selection proceeds as follows:
 5. Within the same relevance tier, use a stable rank derived from
    `page_view_id`, slot ID, and candidate slug.
 
-The published candidate query is capped at 100 rows and the whole request is
-capped at 32 KiB. Retrying an equivalent request with the same page-view ID
-produces the same unique assignments even if D1 returns rows in a different
-order. Inventory or request changes can, appropriately, change the deck.
+The published candidate query ranks relevance inside D1 and admits up to 16
+eligible candidates per requested slot, so unrelated earlier rows cannot hide a
+relevant fact. Excluded slugs are removed before that cap. The whole request is
+capped at 32 KiB and the stream is cancelled as soon as it crosses that bound.
+Retrying an equivalent request with the same page-view ID produces the same
+unique assignments even if D1 returns rows in a different order. Inventory or
+request changes can, appropriately, change the deck.
 
 ## Source-to-text conversion
 

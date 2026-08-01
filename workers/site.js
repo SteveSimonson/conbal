@@ -14,7 +14,7 @@ const maxImportBytes = 512000;
 const maxImportRows = 100;
 const maxImportRowChars = 75000;
 const maxStructuredBytes = 32768;
-const maxStructuredInventory = 100;
+const maxStructuredCandidatesPerSlot = 16;
 const json = (data, init = {}) => new Response(JSON.stringify(data), { ...init, headers: { 'content-type': 'application/json; charset=utf-8', ...(init.headers || {}) } });
 const fail = (error, status = 400) => json({ error }, { status });
 const id = () => crypto.randomUUID();
@@ -200,8 +200,11 @@ function exactKeys(value, allowed) { return Object.keys(value).every(key=>allowe
 async function structuredJsonBody(request) {
   const contentLength=Number(request.headers.get('content-length')||0);
   if(contentLength>maxStructuredBytes)importError('Smart-delivery request is too large',413);
-  const text=await request.text();
-  if(encoder.encode(text).byteLength>maxStructuredBytes)importError('Smart-delivery request is too large',413);
+  const reader=request.body?.getReader();if(!reader)importError('Expected a JSON body');
+  const chunks=[];let length=0;
+  while(true){const {done,value}=await reader.read();if(done)break;length+=value.byteLength;if(length>maxStructuredBytes){await reader.cancel();importError('Smart-delivery request is too large',413);}chunks.push(value);}
+  const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+  const text=new TextDecoder().decode(bytes);
   try{return JSON.parse(text);}catch{importError('Expected a JSON body');}
 }
 function structuredRequest(data) {
@@ -245,7 +248,9 @@ function htmlParts(value) {
     const raw=source.slice(index+1,end).trim(), closing=raw.startsWith('/'), match=raw.match(/^\/?\s*([a-z][a-z0-9-]*)/i), name=match?.[1]?.toLowerCase();
     index=end+1;if(!name)continue;
     if(!closing&&unsafe.has(name)){
-      const close=new RegExp(`<\\/\\s*${name}\\s*>`,'ig');close.lastIndex=index;const found=close.exec(source);index=found?close.lastIndex:source.length;continue;
+      let depth=1,cursor=index;
+      while(depth>0&&cursor<source.length){const open=source.indexOf('<',cursor);if(open<0){cursor=source.length;break;}if(source.startsWith('<!--',open)){const commentEnd=source.indexOf('-->',open+4);cursor=commentEnd<0?source.length:commentEnd+3;continue;}let nestedQuote='',nestedEnd=open+1;for(;nestedEnd<source.length;nestedEnd++){const char=source[nestedEnd];if(nestedQuote){if(char===nestedQuote)nestedQuote='';continue;}if(char==='"'||char==="'"){nestedQuote=char;continue;}if(char==='>')break;}if(nestedEnd>=source.length){cursor=source.length;break;}const nestedRaw=source.slice(open+1,nestedEnd).trim(),nestedClosing=nestedRaw.startsWith('/'),nestedName=nestedRaw.match(/^\/?\s*([a-z][a-z0-9-]*)/i)?.[1]?.toLowerCase();if(nestedName===name){if(nestedClosing)depth--;else if(!nestedRaw.endsWith('/'))depth++;}cursor=nestedEnd+1;}
+      index=cursor;continue;
     }
     if(closing){
       const at=stack.map(frame=>frame.name).lastIndexOf(name);if(at<0)continue;
@@ -268,8 +273,12 @@ function structuredCopy(candidate, budgetName) {
   return {headline:limit(headline,budget.headline),body:limit(bodyText,budget.body)};
 }
 async function structuredInventory(env,siteKey,slots) {
-  const types=[...new Set(slots.flatMap(slot=>slot.editorial_types))].sort(), placeholders=types.map(()=>'?').join(',');
-  return (await env.DB.prepare(`SELECT b.id,b.slug,b.title,b.html,b.editorial_type,b.topics FROM balloons b JOIN sites s ON s.id=b.site_id WHERE s.site_key=? AND b.status='published' AND b.editorial_type IN (${placeholders}) ORDER BY b.id LIMIT ${maxStructuredInventory}`).bind(siteKey,...types).all()).results;
+  const args=[], branches=slots.map(slot=>{
+    const requested=slot.topics.filter(topic=>topic!==defaultContext), relevance=requested.length?requested.map(topic=>`CASE WHEN instr(','||COALESCE(b.topics,'general')||',', ',${topic},')>0 THEN 1 ELSE 0 END`).join('+'):'0', eligible=requested.length?`((${relevance})>0 OR instr(','||COALESCE(b.topics,'general')||',', ',general,')>0)`:`instr(','||COALESCE(b.topics,'general')||',', ',general,')>0`, typePlaceholders=slot.editorial_types.map(()=>'?').join(','), excluded=[...(slot.excludedSlugs||[])], excludedSql=excluded.length?` AND b.slug NOT IN (${excluded.map(()=>'?').join(',')})`:'';
+    args.push(siteKey,...slot.editorial_types,...excluded);
+    return `SELECT id,slug,title,html,editorial_type,topics FROM (SELECT b.id,b.slug,b.title,substr(b.html,1,20000) AS html,b.editorial_type,b.topics,ROW_NUMBER() OVER (ORDER BY (${relevance}) DESC,b.id) AS candidate_rank FROM balloons b JOIN sites s ON s.id=b.site_id WHERE s.site_key=? AND b.status='published' AND b.editorial_type IN (${typePlaceholders}) AND ${eligible}${excludedSql}) WHERE candidate_rank<=${maxStructuredCandidatesPerSlot}`;
+  });
+  return (await env.DB.prepare(`SELECT DISTINCT id,slug,title,html,editorial_type,topics FROM (${branches.join(' UNION ALL ')})`).bind(...args).all()).results;
 }
 function stableRank(pageViewId,slotId,slug) {
   const input=`${pageViewId}\u0000${slotId}\u0000${slug}`;let hash=2166136261;
@@ -283,7 +292,7 @@ function structuredCandidateScore(pageViewId,slot,candidate) {
   const relevance=[...requested].reduce((score,topic)=>score+(candidateTopics.has(topic)?1:0),0);
   if(relevance===0&&!candidateTopics.has(defaultContext))return null;
   const tie=(0xffffffff-stableRank(pageViewId,slot.id,candidate.slug))/0x100000000;
-  return relevance*1e9+1e6+tie;
+  return 1e9+relevance*1e6+tie;
 }
 function maximumWeightAssignments(weights) {
   const rows=weights.length, columns=weights[0]?.length||0, u=Array(rows+1).fill(0), v=Array(columns+1).fill(0), p=Array(columns+1).fill(0), way=Array(columns+1).fill(0);
@@ -304,9 +313,9 @@ async function structuredDigest(pageViewId,slotId,slug) {
 }
 async function structuredDelivery(request,env,context,siteKey) {
   if(request.method!=='POST')return fail('Method not allowed',405);
-  const parsed=structuredRequest(await structuredJsonBody(request)), slots=[...parsed.slots].sort((left,right)=>left.id.localeCompare(right.id)), inventory=(await structuredInventory(env,siteKey,slots)).filter(candidate=>!parsed.excludedSlugs.has(candidate.slug)).sort((left,right)=>left.slug.localeCompare(right.slug)), delivered=[], output=Object.create(null), copies=new Map();
+  const parsed=structuredRequest(await structuredJsonBody(request)), slots=[...parsed.slots].sort((left,right)=>left.id.localeCompare(right.id)).map(slot=>({...slot,excludedSlugs:parsed.excludedSlugs})), inventory=(await structuredInventory(env,siteKey,slots)).filter(candidate=>!parsed.excludedSlugs.has(candidate.slug)).sort((left,right)=>left.slug.localeCompare(right.slug)), delivered=[], output=Object.create(null), copies=new Map(), copyCache=new Map();
   const weights=slots.map((slot,row)=>[
-    ...inventory.map((candidate,column)=>{const score=structuredCandidateScore(parsed.pageViewId,slot,candidate),copy=score===null?null:structuredCopy(candidate,slot.budget);if(!copy?.headline||!copy?.body)return -1e12;copies.set(`${row}:${column}`,copy);return score;}),
+    ...inventory.map((candidate,column)=>{const score=structuredCandidateScore(parsed.pageViewId,slot,candidate);if(score===null)return -1e12;const cacheKey=`${candidate.id}:${slot.budget}`;if(!copyCache.has(cacheKey))copyCache.set(cacheKey,structuredCopy(candidate,slot.budget));const copy=copyCache.get(cacheKey);if(!copy?.headline||!copy?.body)return -1e12;copies.set(`${row}:${column}`,copy);return score;}),
     ...Array.from({length:slots.length},()=>0),
   ]);
   const assigned=maximumWeightAssignments(weights);
