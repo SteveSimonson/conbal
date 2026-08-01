@@ -8,6 +8,7 @@ const candidates = [
   { id: 'one', slug: 'first-fact', size: 'responsive', editorial_type: 'did_you_know', topics: 'general,home' },
   { id: 'two', slug: 'second-fact', size: 'responsive', editorial_type: 'did_you_know', topics: 'general,home' },
   { id: 'three', slug: 'third-fact', size: 'responsive', editorial_type: 'did_you_know', topics: 'general,home' },
+  { id: 'four', slug: 'fixed-fact', size: '300x250', editorial_type: 'did_you_know', topics: 'general,home' },
 ];
 
 function fakeEnvironment({ missing = [] } = {}) {
@@ -89,6 +90,7 @@ test('sampling returns one unique, exact-size public item per requested slot', a
   for (const item of Object.values(body.slots)) {
     assert.equal(item.size, 'responsive');
     assert.equal(item.editorial_type, 'did_you_know');
+    assert.equal('layout' in item, false);
   }
   assert.doesNotMatch(JSON.stringify(body), /balloonId|site_id|user_id/);
   assert.equal(counted.length, 1);
@@ -109,6 +111,48 @@ test('sampling skips missing published KV values and counts only returned items'
   assert.equal(Object.keys(body.slots).length, 2);
   assert.equal(counted.length, 1);
   assert.equal(counted[0].length, 2);
+});
+
+test('sampling accepts and echoes valid layout intent', async () => {
+  const { env } = fakeEnvironment();
+  const requested = [{ ...slots[0], layout: 'product-card' }];
+  const response = await worker.fetch(new Request(sampleUrl(requested)), env, {});
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.slots.alpha.layout, 'product-card');
+  assert.equal(body.slots.alpha.size, 'responsive');
+});
+
+test('sampling requires responsive content for container-native layouts', async () => {
+  const { env } = fakeEnvironment();
+  for (const layout of ['inline', 'panel', 'product-card']) {
+    const response = await worker.fetch(
+      new Request(sampleUrl([{ ...slots[0], size: '300x250', layout }])),
+      env,
+      {},
+    );
+    assert.equal(response.status, 400, `${layout} should reject a fixed size`);
+  }
+
+  for (const layout of ['banner', 'rail', 'fixed']) {
+    const response = await worker.fetch(
+      new Request(sampleUrl([{ ...slots[0], size: '300x250', layout }])),
+      env,
+      {},
+    );
+    assert.equal(response.status, 200, `${layout} should allow an explicit fixed size`);
+    const body = await response.json();
+    assert.equal(body.slots.alpha.layout, layout);
+    assert.equal(body.slots.alpha.size, '300x250');
+  }
+
+  const unknown = await worker.fetch(
+    new Request(sampleUrl([{ ...slots[0], layout: 'sidebar-card' }])),
+    env,
+    {},
+  );
+  assert.equal(unknown.status, 400);
 });
 
 test('sampling prefers eligible balloons that were not recently displayed', async () => {

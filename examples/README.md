@@ -15,3 +15,9 @@ Operational rules:
   Cloudflare resource IDs in this directory.
 - After publishing, verify all three slugs through `/b/CONBALDEMO01/...` and load
   `/` at desktop and mobile widths.
+
+Integration examples should default to `size: "responsive"` so content adopts
+the host container instead of forcing a creative-shaped hole into the page.
+The fixed demo creatives exist to demonstrate the explicit fixed-size contract;
+embed them only in a container whose width and height exactly match the declared
+size. Delivery failures and size mismatches must leave no reserved space.

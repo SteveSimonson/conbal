@@ -55,6 +55,24 @@ to existing balloons, and can publish all reviewed drafts for the selected
 site. Topic lists contain up to eight comma-separated lowercase tags; omitted
 metadata defaults to `did_you_know` and `general`.
 
+## Container-safe embeds
+
+Use `responsive` unless the host page has deliberately reserved an exact-size
+container:
+
+```html
+<div data-conbal-site="YOUR_SITE_KEY" data-conbal="YOUR_SLUG" data-size="responsive"></div>
+<script src="https://conbal.us/embed.js" defer></script>
+```
+
+The loader keeps a slot collapsed until it receives valid content whose size
+matches `data-size`. Responsive content adopts the host container width and
+controls its own height. Fixed sizes are opt-in: use one only when the host
+container is exactly the declared width and height. A missing balloon, failed
+request, invalid size, or size mismatch stays collapsed instead of reserving a
+blank or misleading block. Legacy embeds that omit `data-size` adopt the valid
+size declared by the delivered balloon.
+
 ## Dynamic editorial sampling
 
 Adaptive pages can request one randomized deck per page load:
@@ -64,16 +82,20 @@ GET /b/{siteKey}/_sample?nonce={requestId}&slots={urlEncodedJson}&exclude_slugs=
 ```
 
 `slots` is a JSON array of one to eight objects with `id`, `size`, `topics`,
-and `editorial_types`. Conbal selects distinct published balloons that match
-the exact requested size, prefers topic matches, falls back to the `general`
-topic, and returns `{ "slots": { "slot-id": { "slug", "size",
-"editorial_type", "html", "css" } } }`. Selection uses server-side WebCrypto
-randomness, responses are `no-store`, and the nonce prevents intermediaries
-from coalescing page-load requests. Hosts may send up to 30 validated slugs in
-`exclude_slugs`; compatible fresh balloons are preferred, while excluded items
-remain fallback-only so a small content pool does not create an empty slot.
-Missing candidates are omitted so host pages can fail closed. The legacy
-explicit-slug endpoint remains unchanged.
+and `editorial_types`. A slot may also include `layout` with one of `inline`,
+`panel`, `product-card`, `banner`, `rail`, or `fixed`. Container-native
+`inline`, `panel`, and `product-card` placements require `size: "responsive"`;
+fixed-size content is rejected for those layouts. Conbal selects distinct
+published balloons that match the exact requested size, prefers topic matches,
+falls back to the `general` topic, and echoes a supplied `layout` in the slot
+output. Omitting `layout` preserves the original response contract.
+
+Selection uses server-side WebCrypto randomness, responses are `no-store`, and
+the nonce prevents intermediaries from coalescing page-load requests. Hosts may
+send up to 30 validated slugs in `exclude_slugs`; compatible unseen balloons
+are preferred, while excluded items are considered only after the fresh pool
+is exhausted. Missing candidates are omitted so host pages can fail closed.
+The legacy explicit-slug endpoint remains unchanged.
 
 ## Delivery analytics
 
