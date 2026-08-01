@@ -26,11 +26,7 @@ The endpoint is public, returns JSON, permits cross-origin reads, and sends
       "role": "inline-note",
       "topics": ["home", "bamboo"],
       "editorial_types": ["did_you_know", "care_tip"],
-      "budget": "compact-v1",
-      "container": {
-        "width": 640,
-        "height": 180
-      }
+      "budget": "compact-v1"
     }
   ]
 }
@@ -52,9 +48,6 @@ requirements are:
   types: `did_you_know`, `fun_fact`, `care_tip`, `design_note`,
   `material_myth`, `nature_note`, and `culture_craft`.
 - `budget` is `compact-v1` or `standard-v1`.
-- `container.width` and `container.height` are integer CSS-pixel measurements
-  from 1 through 10,000. A host should measure its stable component container,
-  not the viewport or an unbounded document region.
 
 ## Copy budgets
 
@@ -67,7 +60,7 @@ Budget identifiers are versioned so their limits cannot silently change:
 
 Conbal enforces these limits using JavaScript string length, matching the host
 validator, and avoids leaving a split surrogate pair at a truncation boundary.
-Hosts must still handle ordinary text wrapping inside the supplied container.
+Hosts must still handle ordinary text wrapping inside their own components.
 
 ## Response
 
@@ -112,13 +105,15 @@ allowed by the slot are candidates. Selection proceeds as follows:
 2. Prefer candidates with exact topic-token matches. More requested topic
    matches rank ahead of fewer matches.
 3. Use `general` candidates only as the fallback pool.
-4. Within the same relevance tier, rank deterministically with SHA-256 over
+4. Solve the requested deck as one assignment problem, so a flexible slot
+   cannot consume the only relevant candidate for a more specific slot.
+5. Within the same relevance tier, use a stable rank derived from
    `page_view_id`, slot ID, and candidate slug.
 
-Slots are processed by slot ID, so retrying an equivalent request with the same
-page-view ID produces the same unique assignments even if D1 returns rows in a
-different order. Inventory or request changes can, appropriately, change the
-deck.
+The published candidate query is capped at 100 rows and the whole request is
+capped at 32 KiB. Retrying an equivalent request with the same page-view ID
+produces the same unique assignments even if D1 returns rows in a different
+order. Inventory or request changes can, appropriately, change the deck.
 
 ## Source-to-text conversion
 
@@ -133,5 +128,7 @@ HTML/CSS payload continues to serve v1 and is never exposed by v2.
 ## Errors
 
 Malformed JSON or a contract validation failure returns `400` with a JSON
-`error`. Unsupported methods return `405`; malformed paths and site keys return
-`404`. Valid requests return `200` even when the deck is empty.
+`error`; oversized bodies return `413`. Unsupported methods return `405`;
+malformed paths and site keys return `404`. All v2 responses include the CORS
+headers needed for host sites to read success and failure. Valid requests return
+`200` even when the deck is empty.

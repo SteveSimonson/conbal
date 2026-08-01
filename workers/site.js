@@ -13,6 +13,8 @@ const defaultContext = 'general';
 const maxImportBytes = 512000;
 const maxImportRows = 100;
 const maxImportRowChars = 75000;
+const maxStructuredBytes = 32768;
+const maxStructuredInventory = 100;
 const json = (data, init = {}) => new Response(JSON.stringify(data), { ...init, headers: { 'content-type': 'application/json; charset=utf-8', ...(init.headers || {}) } });
 const fail = (error, status = 400) => json({ error }, { status });
 const id = () => crypto.randomUUID();
@@ -195,19 +197,25 @@ async function sampleDelivery(request, env, url, context, siteKey) {
 }
 function plainObject(value) { return Boolean(value)&&typeof value==='object'&&!Array.isArray(value); }
 function exactKeys(value, allowed) { return Object.keys(value).every(key=>allowed.has(key)); }
+async function structuredJsonBody(request) {
+  const contentLength=Number(request.headers.get('content-length')||0);
+  if(contentLength>maxStructuredBytes)importError('Smart-delivery request is too large',413);
+  const text=await request.text();
+  if(encoder.encode(text).byteLength>maxStructuredBytes)importError('Smart-delivery request is too large',413);
+  try{return JSON.parse(text);}catch{importError('Expected a JSON body');}
+}
 function structuredRequest(data) {
   if(!plainObject(data)||!exactKeys(data,new Set(['contract','page_view_id','repeat_policy','exclude_slugs','slots']))||data.contract!=='2.0'||typeof data.page_view_id!=='string'||!/^[A-Za-z0-9._:-]{1,128}$/.test(data.page_view_id)||data.repeat_policy!=='omit'||!Array.isArray(data.slots)||data.slots.length<1||data.slots.length>8)importError('Invalid smart-delivery request');
   const excluded=data.exclude_slugs===undefined?[]:data.exclude_slugs;
   if(!Array.isArray(excluded)||excluded.length>30||excluded.some(slug=>!validSlug(slug))||new Set(excluded).size!==excluded.length)importError('Invalid excluded slugs');
   const ids=new Set();
   const slots=data.slots.map(slot=>{
-    if(!plainObject(slot)||!exactKeys(slot,new Set(['id','role','topics','editorial_types','budget','container']))||typeof slot.id!=='string'||!/^[A-Za-z0-9_-]{1,48}$/.test(slot.id)||ids.has(slot.id)||!structuredRoles.has(slot.role)||!structuredBudgets.has(slot.budget)||!plainObject(slot.container)||!exactKeys(slot.container,new Set(['width','height'])))importError('Invalid smart-delivery slot');
-    const {width,height}=slot.container;
-    if(!Number.isInteger(width)||width<1||width>10000||!Number.isInteger(height)||height<1||height>10000||!Array.isArray(slot.topics)||slot.topics.length<1||slot.topics.length>8||!slot.topics.every(validMetadataToken)||!Array.isArray(slot.editorial_types)||slot.editorial_types.length<1||slot.editorial_types.length>editorialTypes.size||!slot.editorial_types.every(type=>editorialTypes.has(type)))importError('Invalid smart-delivery slot');
+    if(!plainObject(slot)||!exactKeys(slot,new Set(['id','role','topics','editorial_types','budget']))||typeof slot.id!=='string'||!/^[A-Za-z0-9_-]{1,48}$/.test(slot.id)||ids.has(slot.id)||!structuredRoles.has(slot.role)||!structuredBudgets.has(slot.budget))importError('Invalid smart-delivery slot');
+    if(!Array.isArray(slot.topics)||slot.topics.length<1||slot.topics.length>8||!slot.topics.every(validMetadataToken)||!Array.isArray(slot.editorial_types)||slot.editorial_types.length<1||slot.editorial_types.length>editorialTypes.size||!slot.editorial_types.every(type=>editorialTypes.has(type)))importError('Invalid smart-delivery slot');
     const topics=[...new Set(slot.topics)], types=[...new Set(slot.editorial_types)];
     if(topics.length!==slot.topics.length||types.length!==slot.editorial_types.length)importError('Invalid smart-delivery slot');
     ids.add(slot.id);
-    return {id:slot.id,role:slot.role,topics,editorial_types:types,budget:slot.budget,container:{width,height}};
+    return {id:slot.id,role:slot.role,topics,editorial_types:types,budget:slot.budget};
   });
   return {contract:data.contract,pageViewId:data.page_view_id,repeatPolicy:data.repeat_policy,excludedSlugs:new Set(excluded),slots};
 }
@@ -219,42 +227,76 @@ function decodeEntities(value) {
     return Number.isInteger(code)&&code>0&&code<=0x10ffff&&!(code>=0xd800&&code<=0xdfff)?String.fromCodePoint(code):'�';
   });
 }
-function htmlText(value) {
-  return decodeEntities(String(value||'')
-    .replace(/<!--[\s\S]*?(?:-->|$)/g,' ')
-    .replace(/<(script|style|noscript|template|svg)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi,' ')
-    .replace(/<(?:br|hr)\b[^>]*(?:>|$)|<\/(?:address|article|aside|blockquote|div|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|pre|section|table|td|th|tr|ul)\s*>/gi,' ')
-    .replace(/<[^>]*(?:>|$)/g,' '))
-    .replace(/\s+/g,' ')
-    .trim();
+function htmlParts(value) {
+  const source=String(value||''), unsafe=new Set(['script','style','noscript','template','svg']), captures=new Set(['p','span','div','strong','h1','h2','h3','h4','h5','h6']);
+  const stack=[], headings=[], strong=[], bodies=[], visible=[];
+  const clean=text=>decodeEntities(text).replace(/\s+/g,' ').trim();
+  const finish=frame=>{const text=clean(frame.text);if(!text)return;if(/^h[1-6]$/.test(frame.name))headings.push(text);else if(frame.name==='strong')strong.push(text);else if(['p','span','div'].includes(frame.name))bodies.push(text);};
+  for(let index=0;index<source.length;){
+    if(source.startsWith('<!--',index)){const end=source.indexOf('-->',index+4);index=end<0?source.length:end+3;continue;}
+    if(source[index]!=='<'){
+      const end=source.indexOf('<',index), raw=source.slice(index,end<0?source.length:end);
+      if(!stack.some(frame=>frame.unsafe)){visible.push(raw);for(const frame of stack)if(captures.has(frame.name))frame.text+=` ${raw}`;}
+      index=end<0?source.length:end;continue;
+    }
+    let quote='', end=index+1;
+    for(;end<source.length;end++){const char=source[end];if(quote){if(char===quote)quote='';continue;}if(char==='"'||char==="'"){quote=char;continue;}if(char==='>')break;}
+    if(end>=source.length)break;
+    const raw=source.slice(index+1,end).trim(), closing=raw.startsWith('/'), match=raw.match(/^\/?\s*([a-z][a-z0-9-]*)/i), name=match?.[1]?.toLowerCase();
+    index=end+1;if(!name)continue;
+    if(!closing&&unsafe.has(name)){
+      const close=new RegExp(`<\\/\\s*${name}\\s*>`,'ig');close.lastIndex=index;const found=close.exec(source);index=found?close.lastIndex:source.length;continue;
+    }
+    if(closing){
+      const at=stack.map(frame=>frame.name).lastIndexOf(name);if(at<0)continue;
+      const removed=stack.splice(at);for(const frame of removed.reverse())finish(frame);continue;
+    }
+    if(name==='br'||name==='hr'){visible.push(' ');for(const frame of stack)if(captures.has(frame.name))frame.text+=' ';continue;}
+    if(!raw.endsWith('/'))stack.push({name,text:'',unsafe:false});
+  }
+  for(const frame of stack.reverse())finish(frame);
+  return {all:clean(visible.join(' ')),bodies,headings,strong};
 }
+function htmlText(value) { return htmlParts(value).all; }
 function structuredCopy(candidate, budgetName) {
-  const withoutUnsafe=String(candidate.html||'').replace(/<!--[\s\S]*?(?:-->|$)/g,' ').replace(/<(script|style|noscript|template|svg)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi,' ');
-  const heading=withoutUnsafe.match(/<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]\s*>/i);
-  const strong=withoutUnsafe.match(/<strong\b[^>]*>([\s\S]*?)<\/strong\s*>/i);
-  const headline=htmlText(heading?.[1])||htmlText(strong?.[1])||htmlText(candidate.title);
-  const fragments=[...withoutUnsafe.matchAll(/(?=<(p|span|div)\b[^>]*>([\s\S]*?)<\/\1\s*>)/gi)]
-    .map(match=>htmlText(match[2]))
+  const parts=htmlParts(candidate.html), headline=parts.headings[0]||parts.strong[0]||htmlText(candidate.title);
+  const fragments=parts.bodies
     .filter(text=>text&&text!==headline&&!text.includes(headline)&&!/^(?:\d{1,3}|iB|竹)$/i.test(text)&&!/^(?:(?:iBamboo\s+)?field note|field guide\s*\/\s*iBamboo|bamboo fact(?:\s*[·/]\s*\d+)?)$/i.test(text));
   const bodyText=fragments.filter(text=>text.length>=12).sort((left,right)=>right.length-left.length)[0]||'';
   const budget=structuredBudgets.get(budgetName);
   const limit=(text,max)=>text.slice(0,max).replace(/[\uD800-\uDBFF]$/,'').trim();
   return {headline:limit(headline,budget.headline),body:limit(bodyText,budget.body)};
 }
-async function structuredCandidates(env,siteKey,slot) {
-  const placeholders=slot.editorial_types.map(()=>'?').join(',');
-  return (await env.DB.prepare(`SELECT b.id,b.slug,b.title,b.html,b.editorial_type,b.topics FROM balloons b JOIN sites s ON s.id=b.site_id WHERE s.site_key=? AND b.status='published' AND b.editorial_type IN (${placeholders})`).bind(siteKey,...slot.editorial_types).all()).results;
+async function structuredInventory(env,siteKey,slots) {
+  const types=[...new Set(slots.flatMap(slot=>slot.editorial_types))].sort(), placeholders=types.map(()=>'?').join(',');
+  return (await env.DB.prepare(`SELECT b.id,b.slug,b.title,b.html,b.editorial_type,b.topics FROM balloons b JOIN sites s ON s.id=b.site_id WHERE s.site_key=? AND b.status='published' AND b.editorial_type IN (${placeholders}) ORDER BY b.id LIMIT ${maxStructuredInventory}`).bind(siteKey,...types).all()).results;
 }
-async function deterministicCandidateOrder(pageViewId,slot,candidates) {
+function stableRank(pageViewId,slotId,slug) {
+  const input=`${pageViewId}\u0000${slotId}\u0000${slug}`;let hash=2166136261;
+  for(let index=0;index<input.length;index++){hash^=input.charCodeAt(index);hash=Math.imul(hash,16777619);}
+  return hash>>>0;
+}
+function structuredCandidateScore(pageViewId,slot,candidate) {
+  if(!slot.editorial_types.includes(candidate.editorial_type))return null;
   const requested=new Set(slot.topics.filter(topic=>topic!==defaultContext));
-  const scored=await Promise.all(candidates.map(async candidate=>{
-    const candidateTopics=new Set(String(candidate.topics||defaultContext).split(',').map(topic=>topic.trim()).filter(Boolean));
-    const relevance=[...requested].reduce((score,topic)=>score+(candidateTopics.has(topic)?1:0),0);
-    const generic=candidateTopics.has(defaultContext);
-    const rank=await structuredDigest(pageViewId,slot.id,candidate.slug);
-    return {candidate,relevance,generic,rank};
-  }));
-  return scored.filter(item=>item.relevance>0||item.generic).sort((left,right)=>right.relevance-left.relevance||left.rank.localeCompare(right.rank)||left.candidate.slug.localeCompare(right.candidate.slug)).map(item=>item.candidate);
+  const candidateTopics=new Set(String(candidate.topics||defaultContext).split(',').map(topic=>topic.trim()).filter(Boolean));
+  const relevance=[...requested].reduce((score,topic)=>score+(candidateTopics.has(topic)?1:0),0);
+  if(relevance===0&&!candidateTopics.has(defaultContext))return null;
+  const tie=(0xffffffff-stableRank(pageViewId,slot.id,candidate.slug))/0x100000000;
+  return relevance*1e9+1e6+tie;
+}
+function maximumWeightAssignments(weights) {
+  const rows=weights.length, columns=weights[0]?.length||0, u=Array(rows+1).fill(0), v=Array(columns+1).fill(0), p=Array(columns+1).fill(0), way=Array(columns+1).fill(0);
+  for(let row=1;row<=rows;row++){
+    p[0]=row;let column0=0;const min=Array(columns+1).fill(Infinity), used=Array(columns+1).fill(false);
+    do{used[column0]=true;const row0=p[column0];let delta=Infinity,column1=0;
+      for(let column=1;column<=columns;column++)if(!used[column]){const current=-weights[row0-1][column-1]-u[row0]-v[column];if(current<min[column]){min[column]=current;way[column]=column0;}if(min[column]<delta){delta=min[column];column1=column;}}
+      for(let column=0;column<=columns;column++)if(used[column]){u[p[column]]+=delta;v[column]-=delta;}else min[column]-=delta;
+      column0=column1;
+    }while(p[column0]!==0);
+    do{const column1=way[column0];p[column0]=p[column1];column0=column1;}while(column0!==0);
+  }
+  const assignment=Array(rows).fill(-1);for(let column=1;column<=columns;column++)if(p[column])assignment[p[column]-1]=column-1;return assignment;
 }
 async function structuredDigest(pageViewId,slotId,slug) {
   const bytes=await crypto.subtle.digest('SHA-256',encoder.encode(`${pageViewId}\u0000${slotId}\u0000${slug}`));
@@ -262,27 +304,29 @@ async function structuredDigest(pageViewId,slotId,slug) {
 }
 async function structuredDelivery(request,env,context,siteKey) {
   if(request.method!=='POST')return fail('Method not allowed',405);
-  const parsed=structuredRequest(await body(request)), selectedSlugs=new Set(), delivered=[], output=Object.create(null);
-  for(const slot of [...parsed.slots].sort((left,right)=>left.id.localeCompare(right.id))){
-    const candidates=(await structuredCandidates(env,siteKey,slot)).filter(candidate=>!parsed.excludedSlugs.has(candidate.slug)&&!selectedSlugs.has(candidate.slug));
-    let selected=null, copy=null;
-    for(const candidate of await deterministicCandidateOrder(parsed.pageViewId,slot,candidates)){
-      const extracted=structuredCopy(candidate,slot.budget);
-      if(!extracted.headline||!extracted.body)continue;
-      selected=candidate; copy=extracted; break;
-    }
-    if(!selected)continue;
-    selectedSlugs.add(selected.slug); delivered.push({slug:selected.slug,value:{balloonId:selected.id}});
+  const parsed=structuredRequest(await structuredJsonBody(request)), slots=[...parsed.slots].sort((left,right)=>left.id.localeCompare(right.id)), inventory=(await structuredInventory(env,siteKey,slots)).filter(candidate=>!parsed.excludedSlugs.has(candidate.slug)).sort((left,right)=>left.slug.localeCompare(right.slug)), delivered=[], output=Object.create(null), copies=new Map();
+  const weights=slots.map((slot,row)=>[
+    ...inventory.map((candidate,column)=>{const score=structuredCandidateScore(parsed.pageViewId,slot,candidate),copy=score===null?null:structuredCopy(candidate,slot.budget);if(!copy?.headline||!copy?.body)return -1e12;copies.set(`${row}:${column}`,copy);return score;}),
+    ...Array.from({length:slots.length},()=>0),
+  ]);
+  const assigned=maximumWeightAssignments(weights);
+  for(let row=0;row<slots.length;row++){
+    const column=assigned[row];if(column<0||column>=inventory.length||weights[row][column]<0)continue;
+    const slot=slots[row],selected=inventory[column],copy=copies.get(`${row}:${column}`);if(!copy)continue;
+    delivered.push({slug:selected.slug,value:{balloonId:selected.id}});
     output[slot.id]={assignment_id:`v2_${(await structuredDigest(parsed.pageViewId,slot.id,selected.slug)).slice(0,32)}`,slug:selected.slug,role:slot.role,budget:slot.budget,editorial_type:selected.editorial_type,content:copy};
   }
   if(delivered.length){const work=recordDeliveries(env,siteKey,delivered).catch(error=>console.error('delivery counter failed',error));if(context?.waitUntil)context.waitUntil(work);else await work;}
   return json({assignments:output},{headers:{'access-control-allow-origin':'*','cache-control':'no-store, max-age=0'}});
 }
+function structuredCors(response) { const headers=new Headers(response.headers);headers.set('access-control-allow-origin','*');headers.set('access-control-allow-methods','POST, OPTIONS');headers.set('access-control-allow-headers','content-type');headers.set('cache-control','no-store, max-age=0');return new Response(response.body,{status:response.status,statusText:response.statusText,headers}); }
 async function v2Delivery(request,env,url,context) {
-  const parts=url.pathname.split('/').filter(Boolean);
-  if(parts.length!==4||parts[0]!=='v2'||parts[1]!=='b'||parts[3]!=='sample'||!validSiteKey(parts[2]))return fail('Not found',404);
-  if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{'access-control-allow-origin':'*','access-control-allow-methods':'POST, OPTIONS','access-control-allow-headers':'content-type','access-control-max-age':'86400'}});
-  return structuredDelivery(request,env,context,parts[2]);
+  try{
+    const parts=url.pathname.split('/').filter(Boolean);
+    if(parts.length!==4||parts[0]!=='v2'||parts[1]!=='b'||parts[3]!=='sample'||!validSiteKey(parts[2]))return structuredCors(fail('Not found',404));
+    if(request.method==='OPTIONS')return structuredCors(new Response(null,{status:204,headers:{'access-control-max-age':'86400'}}));
+    return structuredCors(await structuredDelivery(request,env,context,parts[2]));
+  }catch(error){return structuredCors(fail(error.message||'Server error',error.status||500));}
 }
 async function delivery(request, env, url, context) {
   const parts = url.pathname.split('/').filter(Boolean); const siteKey = parts[1];

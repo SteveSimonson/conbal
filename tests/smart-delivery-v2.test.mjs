@@ -10,7 +10,6 @@ const baseSlot = {
   topics: ['home'],
   editorial_types: ['did_you_know'],
   budget: 'standard-v1',
-  container: { width: 640, height: 180 },
 };
 
 function requestBody(overrides = {}) {
@@ -34,6 +33,7 @@ function v2Request(data = requestBody(), method = 'POST') {
 
 function fakeEnvironment(inventory = [], { reverseEveryQuery = false } = {}) {
   const counted = [];
+  const queries = [];
   const kvValues = new Map(inventory.map(item => [
     `b:${siteKey}:${item.slug}`,
     { balloonId: item.id, html: item.kvHtml ?? item.html, css: item.css ?? '.owner{}', size: item.size ?? 'responsive' },
@@ -46,6 +46,7 @@ function fakeEnvironment(inventory = [], { reverseEveryQuery = false } = {}) {
         bind(...args) { this.args = args; return this; },
         async all() {
           if (!sql.includes("b.status='published'")) throw new Error(`Unexpected query: ${sql}`);
+          queries.push(sql);
           const [, ...types] = this.args;
           let rows = inventory.filter(item => (item.status ?? 'published') === 'published' && types.includes(item.editorial_type));
           if (reverseEveryQuery && queryCount++ % 2) rows = [...rows].reverse();
@@ -62,7 +63,7 @@ function fakeEnvironment(inventory = [], { reverseEveryQuery = false } = {}) {
     async get(key) { return kvValues.get(key) ?? null; },
     async put(key, value) { kvValues.set(key, JSON.parse(value)); },
   };
-  return { env: { DB, CONBAL_KV, ASSETS: { fetch: () => new Response('asset') } }, counted };
+  return { env: { DB, CONBAL_KV, ASSETS: { fetch: () => new Response('asset') } }, counted, queries };
 }
 
 const inventory = [
@@ -82,7 +83,7 @@ test('v2 returns the structured 2.0 contract with bounded plain text only', asyn
     editorial_type: 'did_you_know',
     topics: 'home',
   };
-  const { env, counted } = fakeEnvironment([source]);
+  const { env, counted, queries } = fakeEnvironment([source]);
   const response = await worker.fetch(v2Request(), env, {});
   const body = await response.json();
 
@@ -107,6 +108,8 @@ test('v2 returns the structured 2.0 contract with bounded plain text only', asyn
   assert.match(body.assignments.primary.assignment_id, /^v2_[0-9a-f]{32}$/);
   assert.doesNotMatch(JSON.stringify(body), /<[^>]*>|html|css|color|background|alert|Stale KV/);
   assert.deepEqual(counted, [['safe']]);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0], /LIMIT 100/);
 });
 
 test('v2 assignments are stable across retries and database row order', async () => {
@@ -136,6 +139,20 @@ test('v2 exact context outranks unseen generic content', async () => {
 
   assert.ok(['context-one', 'context-two'].includes(selected.slug));
   assert.notEqual(selected.slug, 'generic-one');
+});
+
+test('v2 assigns the whole deck globally so a flexible slot cannot starve a specific slot', async () => {
+  const exact = { id: 'exact', slug: 'home-exact', title: 'Exact', html: '<strong>Exact home fact</strong><p>A specific home fact that the second slot needs.</p>', editorial_type: 'did_you_know', topics: 'home,general' };
+  const generic = { id: 'generic', slug: 'only-generic', title: 'Generic', html: '<strong>General fact</strong><p>A general fallback that keeps the flexible slot filled.</p>', editorial_type: 'did_you_know', topics: 'general' };
+  const { env } = fakeEnvironment([exact, generic]);
+  const response = await worker.fetch(v2Request(requestBody({ slots: [
+    { ...baseSlot, id: 'alpha', topics: ['general'] },
+    { ...baseSlot, id: 'zulu', topics: ['home'] },
+  ] })), env, {});
+  const assignments = (await response.json()).assignments;
+
+  assert.equal(assignments.alpha.slug, 'only-generic');
+  assert.equal(assignments.zulu.slug, 'home-exact');
 });
 
 test('repeat_policy omit honors exclusions and leaves unfillable slots absent', async () => {
@@ -196,6 +213,23 @@ test('v2 understands the existing iBamboo strong-heading templates without leaki
   });
 });
 
+test('v2 HTML extraction does not leak attributes containing greater-than signs', async () => {
+  const source = {
+    id: 'quoted-attribute',
+    slug: 'quoted-attribute',
+    title: 'Database title',
+    html: '<div data-label="private > attribute"><strong>Visible headline</strong><p title="secret > value">Visible body copy remains clean and useful.</p></div>',
+    editorial_type: 'did_you_know',
+    topics: 'home',
+  };
+  const { env } = fakeEnvironment([source]);
+  const response = await worker.fetch(v2Request(), env, {});
+  const copy = (await response.json()).assignments.primary.content;
+
+  assert.deepEqual(copy, { headline: 'Visible headline', body: 'Visible body copy remains clean and useful.' });
+  assert.doesNotMatch(JSON.stringify(copy), /private|attribute|secret|value/);
+});
+
 test('v2 returns an empty deck when published inventory cannot fill a request', async () => {
   const { env, counted } = fakeEnvironment([
     { ...inventory[0], status: 'draft' },
@@ -232,6 +266,23 @@ test('v2 rejects malformed contracts, slots, exclusions, and methods', async () 
   }
   assert.equal((await worker.fetch(v2Request(undefined, 'GET'), env, {})).status, 405);
   assert.equal((await worker.fetch(new Request('https://conbal.us/v2/b/short/sample', { method: 'POST' }), env, {})).status, 404);
+});
+
+test('v2 bounds request bodies and returns CORS-readable client errors', async () => {
+  const { env } = fakeEnvironment(inventory);
+  const requests = [
+    new Request(`https://conbal.us/v2/b/${siteKey}/sample`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{bad json' }),
+    new Request(`https://conbal.us/v2/b/${siteKey}/sample`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: 'x'.repeat(32769) }),
+    v2Request(undefined, 'GET'),
+    new Request('https://conbal.us/v2/b/short/sample', { method: 'POST' }),
+  ];
+  const expected = [400, 413, 405, 404];
+  for (let index = 0; index < requests.length; index++) {
+    const response = await worker.fetch(requests[index], env, {});
+    assert.equal(response.status, expected[index]);
+    assert.equal(response.headers.get('access-control-allow-origin'), '*');
+    assert.match(response.headers.get('cache-control'), /no-store/);
+  }
 });
 
 test('v2 permits the JSON POST CORS preflight used by host sites', async () => {
