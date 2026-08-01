@@ -1,6 +1,8 @@
 const encoder = new TextEncoder();
 const fixedSizes = new Set(['responsive', '300x250', '336x280', '728x90', '160x600', '320x100']);
 const editorialTypes = new Set(['did_you_know', 'fun_fact', 'care_tip', 'design_note', 'material_myth', 'nature_note', 'culture_craft']);
+const sampleLayouts = new Set(['inline', 'panel', 'product-card', 'banner', 'rail', 'fixed']);
+const containerNativeLayouts = new Set(['inline', 'panel', 'product-card']);
 const defaultEditorialType = 'did_you_know';
 const defaultContext = 'general';
 const maxImportBytes = 512000;
@@ -149,7 +151,9 @@ function sampleRequest(url) {
   if(!Array.isArray(slots)||slots.length<1||slots.length>8)importError('Sample requests need 1 to 8 slots');
   const ids=new Set(); const cleaned=slots.map(slot=>{
     if(!slot||typeof slot!=='object'||Array.isArray(slot)||typeof slot.id!=='string'||!/^[A-Za-z0-9_-]{1,48}$/.test(slot.id)||ids.has(slot.id)||!fixedSizes.has(slot.size)||!Array.isArray(slot.topics)||slot.topics.length<1||slot.topics.length>8||!Array.isArray(slot.editorial_types)||slot.editorial_types.length<1||slot.editorial_types.length>editorialTypes.size)importError('Invalid sample slot');
-    const topics=[...new Set(slot.topics)]; const types=[...new Set(slot.editorial_types)]; if(!topics.every(validMetadataToken)||!types.every(type=>editorialTypes.has(type)))importError('Invalid sample slot'); ids.add(slot.id); return {id:slot.id,size:slot.size,topics,editorial_types:types};
+    const topics=[...new Set(slot.topics)]; const types=[...new Set(slot.editorial_types)]; const layout=slot.layout;
+    if(!topics.every(validMetadataToken)||!types.every(type=>editorialTypes.has(type))||(layout!==undefined&&!sampleLayouts.has(layout))||(layout!==undefined&&containerNativeLayouts.has(layout)&&slot.size!=='responsive'))importError('Invalid sample slot');
+    ids.add(slot.id); return {id:slot.id,size:slot.size,topics,editorial_types:types,...(layout===undefined?{}:{layout})};
   });
   const nonce=url.searchParams.get('nonce'); if(nonce!==null&&(!/^[A-Za-z0-9_-]{1,128}$/.test(nonce)))importError('Invalid sample nonce');
   return {slots:cleaned,excludedSlugs:sampleExcludes(url)};
@@ -179,7 +183,7 @@ async function sampleDelivery(request, env, url, context, siteKey) {
       selected=candidate; value=payload; break;
     }
     if(!selected||!value)continue;
-    selectedIds.add(selected.id); delivered.push({slug:selected.slug,value}); output[slot.id]={slug:selected.slug,size:selected.size,editorial_type:selected.editorial_type,html:value.html,css:value.css||''};
+    selectedIds.add(selected.id); delivered.push({slug:selected.slug,value}); output[slot.id]={slug:selected.slug,size:selected.size,editorial_type:selected.editorial_type,html:value.html,css:value.css||'',...(slot.layout===undefined?{}:{layout:slot.layout})};
   }
   if(delivered.length){const work=recordDeliveries(env,siteKey,delivered).catch(error=>console.error('delivery counter failed',error));if(context?.waitUntil)context.waitUntil(work);else await work;}
   return json({slots:output},{headers:{'access-control-allow-origin':'*','cache-control':'no-store, max-age=0'}});

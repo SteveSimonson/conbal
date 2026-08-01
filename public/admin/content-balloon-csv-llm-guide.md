@@ -72,7 +72,12 @@ These balloon properties exist in Conbal but are assigned by the server and must
 | `160x600` | 160 by 600 pixels | Vertical promotion or narrow sidebar feature. |
 | `320x100` | 320 by 100 pixels | Mobile banner or compact mobile call to action. |
 
-For a fixed size, the embed loader applies that width and height to the slot and sets `overflow: hidden`. Design the HTML and CSS to fit completely inside those dimensions. For `responsive`, the loader sets the slot width to `100%`; the balloon content must establish its own useful height.
+Use `responsive` by default so the balloon adopts the host container. A fixed
+size is opt-in and is appropriate only when the host has reserved a container
+with exactly that width and height. After successful validation, the loader
+applies fixed dimensions and clips overflow. For `responsive`, the loader sets
+the slot to block layout at `width: 100%`, `max-width: 100%`, and `height: auto`;
+the balloon content must establish its own useful height.
 
 ## HTML generation rules
 
@@ -210,7 +215,13 @@ published balloons that match those constraints. Authors should therefore use
 truthful optional metadata and should create enough genuinely different facts
 for a page to rotate without repeating itself.
 
-The embed slot's `data-size` controls reserved dimensions, so it should match the CSV `size` value. An omitted or unsupported `data-size` does not block otherwise valid content, but the loader will not reserve dimensions for it. A missing or invalid site key or slug, or a draft or unpublished balloon, returns no balloon content.
+The embed slot's `data-size` must match the delivered balloon's CSV `size`.
+Slots stay collapsed while loading and remain collapsed after a missing balloon,
+request failure, unsupported size, or size mismatch. An omitted `data-size` keeps
+legacy embeds working by adopting the valid delivered size. Fixed dimensions are
+applied only after successful validation; responsive content fills the host
+container and supplies its own height. A missing or invalid site key or slug, or
+a draft or unpublished balloon, returns no balloon content.
 
 ## Pre-import checklist for an LLM or reviewer
 
