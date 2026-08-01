@@ -97,6 +97,11 @@ are preferred, while excluded items are considered only after the fresh pool
 is exhausted. Missing candidates are omitted so host pages can fail closed.
 The legacy explicit-slug endpoint remains unchanged.
 
+For host-rendered, container-aware components, use the structured `POST`
+contract documented in [`docs/SMART-DELIVERY-V2.md`](docs/SMART-DELIVERY-V2.md).
+Smart Delivery v2 returns bounded headline/body text instead of owner HTML/CSS,
+uses stable page-view assignments, and omits repeats when inventory runs out.
+
 ## Delivery analytics
 
 Conbal counts each successfully returned published balloon once per public delivery request. Repeated instances of the same slug in one loader request count once; missing, draft, and unpublished balloons do not count. Balloon totals roll up additively by configured site and account. Recording is asynchronous and best-effort so analytics never delay content delivery. Counts are delivery calls—not unique people—and may include reloads, bots, and direct API clients.
