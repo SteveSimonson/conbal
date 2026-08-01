@@ -9,6 +9,7 @@ CREATE TABLE sites (
 CREATE TABLE balloons (
   id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id), slug TEXT NOT NULL,
   title TEXT NOT NULL, html TEXT NOT NULL, css TEXT, size TEXT NOT NULL DEFAULT 'responsive',
+  editorial_type TEXT NOT NULL DEFAULT 'did_you_know', topics TEXT NOT NULL DEFAULT 'general',
   status TEXT NOT NULL DEFAULT 'draft', updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(site_id, slug)
 );
@@ -19,3 +20,4 @@ CREATE TABLE balloon_delivery_counts (
 );
 CREATE INDEX idx_sites_user ON sites(user_id);
 CREATE INDEX idx_balloons_site ON balloons(site_id);
+CREATE INDEX idx_balloons_site_status_size ON balloons(site_id, status, size);
