@@ -54,10 +54,11 @@ function fakeEnvironment({ missing = [] } = {}) {
   };
 }
 
-function sampleUrl(slots) {
+function sampleUrl(slots, { excludeSlugs } = {}) {
   const url = new URL(`https://conbal.us/b/${siteKey}/_sample`);
   url.searchParams.set('nonce', 'test-load-1');
   url.searchParams.set('slots', JSON.stringify(slots));
+  if (excludeSlugs !== undefined) url.searchParams.set('exclude_slugs', excludeSlugs);
   return url;
 }
 
@@ -110,6 +111,31 @@ test('sampling skips missing published KV values and counts only returned items'
   assert.equal(counted[0].length, 2);
 });
 
+test('sampling prefers eligible balloons that were not recently displayed', async () => {
+  const { env } = fakeEnvironment();
+  const response = await worker.fetch(
+    new Request(sampleUrl([slots[0]], { excludeSlugs: 'first-fact,second-fact' })),
+    env,
+    {},
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).slots.alpha.slug, 'third-fact');
+});
+
+test('sampling falls back to an excluded balloon only when every eligible balloon is excluded', async () => {
+  const { env } = fakeEnvironment();
+  const response = await worker.fetch(
+    new Request(sampleUrl([slots[0]], { excludeSlugs: candidates.map(item => item.slug).join(',') })),
+    env,
+    {},
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.ok(candidates.some(item => item.slug === body.slots.alpha.slug));
+});
+
 test('sampling rejects malformed or oversized slot requests', async () => {
   const { env } = fakeEnvironment();
   const badSize = [{ ...slots[0], size: '640x480' }];
@@ -119,6 +145,13 @@ test('sampling rejects malformed or oversized slot requests', async () => {
   const tooMany = Array.from({ length: 9 }, (_, index) => ({ ...slots[0], id: `slot-${index}` }));
   const manyResponse = await worker.fetch(new Request(sampleUrl(tooMany)), env, {});
   assert.equal(manyResponse.status, 400);
+
+  const malformedExcludes = await worker.fetch(new Request(sampleUrl([slots[0]], { excludeSlugs: 'first-fact,NOT-VALID' })), env, {});
+  assert.equal(malformedExcludes.status, 400);
+
+  const oversizedExcludes = Array.from({ length: 31 }, (_, index) => `fact-${index}`).join(',');
+  const oversizedResponse = await worker.fetch(new Request(sampleUrl([slots[0]], { excludeSlugs: oversizedExcludes })), env, {});
+  assert.equal(oversizedResponse.status, 400);
 
   const methodResponse = await worker.fetch(new Request(sampleUrl(slots), { method: 'POST' }), env, {});
   assert.equal(methodResponse.status, 405);

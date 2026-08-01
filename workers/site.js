@@ -136,6 +136,13 @@ function randomIndex(max) {
   return value[0]%max;
 }
 function randomOrder(items) { const ordered=[...items]; for(let index=ordered.length-1;index>0;index--){const swap=randomIndex(index+1);[ordered[index],ordered[swap]]=[ordered[swap],ordered[index]];} return ordered; }
+function sampleExcludes(url) {
+  const raw=url.searchParams.get('exclude_slugs');
+  if(raw===null)return new Set();
+  const slugs=raw.split(',');
+  if(!slugs.length||slugs.length>30||slugs.some(slug=>!validSlug(slug)))importError('Invalid sample excludes');
+  return new Set(slugs);
+}
 function sampleRequest(url) {
   const raw=url.searchParams.get('slots'); if(!raw||raw.length>4096) importError('Invalid sample slots'); let slots;
   try { slots=JSON.parse(raw); } catch { importError('Invalid sample slots'); }
@@ -145,7 +152,7 @@ function sampleRequest(url) {
     const topics=[...new Set(slot.topics)]; const types=[...new Set(slot.editorial_types)]; if(!topics.every(validMetadataToken)||!types.every(type=>editorialTypes.has(type)))importError('Invalid sample slot'); ids.add(slot.id); return {id:slot.id,size:slot.size,topics,editorial_types:types};
   });
   const nonce=url.searchParams.get('nonce'); if(nonce!==null&&(!/^[A-Za-z0-9_-]{1,128}$/.test(nonce)))importError('Invalid sample nonce');
-  return cleaned;
+  return {slots:cleaned,excludedSlugs:sampleExcludes(url)};
 }
 async function sampleCandidates(env, siteKey, slot) {
   const placeholders=slot.editorial_types.map(()=>'?').join(',');
@@ -154,13 +161,19 @@ async function sampleCandidates(env, siteKey, slot) {
 function matchesTopics(candidate, topics) { const candidateTopics=String(candidate.topics||defaultContext).split(','); return topics.some(topic=>candidateTopics.includes(topic)); }
 async function sampleDelivery(request, env, url, context, siteKey) {
   if(request.method!=='GET')return fail('Method not allowed',405);
-  const slots=sampleRequest(url), selectedIds=new Set(), delivered=[], output=Object.create(null);
+  const {slots,excludedSlugs}=sampleRequest(url), selectedIds=new Set(), delivered=[], output=Object.create(null);
   for(const slot of slots){
     const candidates=await sampleCandidates(env,siteKey,slot);
     const contextual=candidates.filter(candidate=>!selectedIds.has(candidate.id)&&matchesTopics(candidate,slot.topics));
     const fallback=candidates.filter(candidate=>!selectedIds.has(candidate.id)&&!contextual.some(item=>item.id===candidate.id)&&matchesTopics(candidate,[defaultContext]));
     let selected=null, value=null;
-    for(const candidate of [...randomOrder(contextual),...randomOrder(fallback)]){
+    const available=[
+      ...randomOrder(contextual.filter(candidate=>!excludedSlugs.has(candidate.slug))),
+      ...randomOrder(fallback.filter(candidate=>!excludedSlugs.has(candidate.slug))),
+      ...randomOrder(contextual.filter(candidate=>excludedSlugs.has(candidate.slug))),
+      ...randomOrder(fallback.filter(candidate=>excludedSlugs.has(candidate.slug))),
+    ];
+    for(const candidate of available){
       const payload=await env.CONBAL_KV.get(`b:${siteKey}:${candidate.slug}`,'json');
       if(!payload||payload.size!==candidate.size)continue;
       selected=candidate; value=payload; break;
