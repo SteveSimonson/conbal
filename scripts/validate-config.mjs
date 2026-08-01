@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 const root = new URL('..', import.meta.url);
 const read = file => readFile(new URL(file, root), 'utf8');
 const failures = [];
+const allowPlaceholderBindings = process.env.CONBAL_ALLOW_PLACEHOLDER_BINDINGS === '1';
 const requireMatch = (source, expression, description) => {
   if (!expression.test(source)) failures.push(description);
 };
@@ -16,10 +17,10 @@ try {
 
 if (wrangler) {
   if (wrangler.main !== 'workers/site.js') failures.push('wrangler.jsonc must use workers/site.js as main.');
-  if (wrangler.d1_databases?.length !== 1 || !wrangler.d1_databases[0]?.database_id || wrangler.d1_databases[0].database_id.includes('REPLACE_WITH')) {
+  if (wrangler.d1_databases?.length !== 1 || !wrangler.d1_databases[0]?.database_id || (!allowPlaceholderBindings && wrangler.d1_databases[0].database_id.includes('REPLACE_WITH'))) {
     failures.push('Set the D1 database ID in wrangler.jsonc before deploying.');
   }
-  if (wrangler.kv_namespaces?.length !== 1 || !wrangler.kv_namespaces[0]?.id || wrangler.kv_namespaces[0].id.includes('REPLACE_WITH')) {
+  if (wrangler.kv_namespaces?.length !== 1 || !wrangler.kv_namespaces[0]?.id || (!allowPlaceholderBindings && wrangler.kv_namespaces[0].id.includes('REPLACE_WITH'))) {
     failures.push('Set the KV namespace ID in wrangler.jsonc before deploying.');
   }
   if (!wrangler.assets?.run_worker_first?.includes('/api/*') || !wrangler.assets?.run_worker_first?.includes('/b/*')) {
@@ -34,6 +35,8 @@ for (const [expression, description] of [
   [/CREATE TABLE sites\b/i, 'schema.sql must create sites.'],
   [/site_key TEXT UNIQUE NOT NULL/i, 'sites.site_key must remain unique and required.'],
   [/CREATE TABLE balloons\b/i, 'schema.sql must create balloons.'],
+  [/editorial_type TEXT NOT NULL DEFAULT 'did_you_know'/i, 'balloons.editorial_type must default to did_you_know.'],
+  [/topics TEXT NOT NULL DEFAULT 'general'/i, 'balloons.topics must default to general.'],
   [/UNIQUE\s*\(\s*site_id\s*,\s*slug\s*\)/i, 'balloons must enforce unique slugs per site.'],
   [/CREATE TABLE balloon_delivery_counts\b/i, 'schema.sql must create balloon delivery counters.'],
   [/delivery_count INTEGER NOT NULL DEFAULT 0/i, 'balloon delivery counts must default to zero.'],

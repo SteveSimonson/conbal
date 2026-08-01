@@ -1,5 +1,8 @@
 const encoder = new TextEncoder();
 const fixedSizes = new Set(['responsive', '300x250', '336x280', '728x90', '160x600', '320x100']);
+const editorialTypes = new Set(['did_you_know', 'fun_fact', 'care_tip', 'design_note', 'material_myth', 'nature_note', 'culture_craft']);
+const defaultEditorialType = 'did_you_know';
+const defaultContext = 'general';
 const maxImportBytes = 512000;
 const maxImportRows = 100;
 const maxImportRowChars = 75000;
@@ -46,13 +49,22 @@ function parseCsv(csv) {
 function csvImportRows(csv) {
   const rows=parseCsv(csv); if(!rows.length) importError('CSV must include a header row'); const headers=rows.shift().map((value,index)=>(index===0?value.replace(/^\uFEFF/,''):value).trim().toLowerCase());
   const required=['title','slug','size','html','css']; const indexes={}; for(const name of required){const index=headers.indexOf(name);if(index<0)importError(`CSV is missing required ${name} column`);if(headers.indexOf(name,index+1)>=0)importError(`CSV contains duplicate ${name} columns`);indexes[name]=index;}
+  const optional=['editorial_type','topics']; for(const name of optional){const index=headers.indexOf(name);if(index>=0&&headers.indexOf(name,index+1)>=0)importError(`CSV contains duplicate ${name} columns`);indexes[name]=index;}
   if(rows.length>maxImportRows) importError(`CSV may contain at most ${maxImportRows} balloon rows`,413); const slugs=new Set(); const balloons=[];
-  rows.forEach((row,rowIndex)=>{const number=rowIndex+2;if(row.join('').length>maxImportRowChars)importError(`Row ${number}: row is too large`,413);if(row.length>headers.length)importError(`Row ${number}: has more columns than the header`);const data=Object.fromEntries(required.map(name=>[name,row[indexes[name]] ?? '']));let balloon;try{balloon=cleanBalloon(data);}catch(error){importError(`Row ${number}: ${error.message}`);}if(slugs.has(balloon.slug))importError(`Row ${number}: duplicate slug "${balloon.slug}" in this file`);slugs.add(balloon.slug);balloons.push({...balloon,sourceRow:number});});
+  rows.forEach((row,rowIndex)=>{const number=rowIndex+2;if(row.join('').length>maxImportRowChars)importError(`Row ${number}: row is too large`,413);if(row.length>headers.length)importError(`Row ${number}: has more columns than the header`);const data=Object.fromEntries([...required,...optional].map(name=>[name,indexes[name]>=0?(row[indexes[name]] ?? ''):undefined]));let balloon;try{balloon=cleanBalloon(data);}catch(error){importError(`Row ${number}: ${error.message}`);}if(slugs.has(balloon.slug))importError(`Row ${number}: duplicate slug "${balloon.slug}" in this file`);slugs.add(balloon.slug);balloons.push({...balloon,sourceRow:number});});
   if(!balloons.length) importError('CSV must include at least one balloon row'); return balloons;
+}
+function csvMetadataRows(csv) {
+  const rows=parseCsv(csv); if(!rows.length) importError('CSV must include a header row'); const headers=rows.shift().map((value,index)=>(index===0?value.replace(/^\uFEFF/,''):value).trim().toLowerCase());
+  const required=['slug','editorial_type','topics']; const indexes={}; for(const name of required){const index=headers.indexOf(name);if(index<0)importError(`CSV is missing required ${name} column`);if(headers.indexOf(name,index+1)>=0)importError(`CSV contains duplicate ${name} columns`);indexes[name]=index;}
+  if(rows.length>maxImportRows) importError(`CSV may contain at most ${maxImportRows} balloon rows`,413); const slugs=new Set(); const metadata=[];
+  rows.forEach((row,rowIndex)=>{const number=rowIndex+2;if(row.join('').length>maxImportRowChars)importError(`Row ${number}: row is too large`,413);if(row.length>headers.length)importError(`Row ${number}: has more columns than the header`);const slug=row[indexes.slug] ?? '', editorialType=row[indexes.editorial_type], topics=row[indexes.topics];let values;try{if(!validSlug(slug))throw new Error('Invalid balloon slug');if(typeof editorialType!=='string'||!editorialType.trim()||typeof topics!=='string'||!topics.trim())throw new Error('Metadata values are required');values={slug,editorial_type:cleanEditorialType(editorialType),topics:cleanTopics(topics)};}catch(error){importError(`Row ${number}: ${error.message}`);}if(slugs.has(values.slug))importError(`Row ${number}: duplicate slug "${values.slug}" in this file`);slugs.add(values.slug);metadata.push({...values,sourceRow:number});});
+  if(!metadata.length) importError('CSV must include at least one balloon row'); return metadata;
 }
 function validEmail(email) { return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email); }
 function validSlug(slug) { return typeof slug === 'string' && /^[a-z0-9-]{1,80}$/.test(slug); }
 function validSiteKey(siteKey) { return typeof siteKey === 'string' && /^[A-Za-z0-9_-]{12}$/.test(siteKey); }
+function validMetadataToken(value) { return typeof value === 'string' && /^[a-z0-9-]{1,48}$/.test(value); }
 function isEmailConflict(error) { return /UNIQUE constraint failed: users\.email/i.test(String(error?.message || error)); }
 function isBalloonSlugConflict(error) { return /UNIQUE constraint failed: balloons\.site_id, balloons\.slug/i.test(String(error?.message || error)); }
 function cookie(value, age = 0) { return `conbal_session=${encodeURIComponent(value || '')}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`; }
@@ -63,13 +75,15 @@ async function requireUser(request, env) { const s = await session(request, env)
 async function ownerSite(env, user, siteId) { const site = await env.DB.prepare('SELECT * FROM sites WHERE id=? AND user_id=?').bind(siteId, user.id).first(); if (!site) throw Object.assign(new Error('Site not found'), { status: 404 }); return site; }
 async function ownerBalloon(env, user, balloonId) { const balloon = await env.DB.prepare('SELECT b.*, s.site_key FROM balloons b JOIN sites s ON s.id=b.site_id WHERE b.id=? AND s.user_id=?').bind(balloonId, user.id).first(); if (!balloon) throw Object.assign(new Error('Balloon not found'), { status: 404 }); return balloon; }
 function cleanBalloon(data) {
-  const { title, slug, html, css = '', size = 'responsive' } = data;
+  const { title, slug, html, css = '', size = 'responsive', editorial_type, topics } = data;
   if (typeof title !== 'string' || !title.trim() || title.length > 200 || !validSlug(slug) || typeof html !== 'string' || html.length > 50000 || typeof css !== 'string' || css.length > 20000 || !fixedSizes.has(size)) throw new Error('Invalid balloon fields');
-  return { title: title.trim(), slug, html, css, size };
+  return { title: title.trim(), slug, html, css, size, editorial_type: cleanEditorialType(editorial_type), topics: cleanTopics(topics) };
 }
+function cleanEditorialType(value) { const editorialType=value==null||value===''?defaultEditorialType:String(value).trim(); if(!editorialTypes.has(editorialType))throw new Error('Invalid editorial type'); return editorialType; }
+function cleanTopics(value) { const raw=value==null||value===''?defaultContext:String(value).trim(); const topics=[...new Set(raw.split(',').map(item=>item.trim()).filter(Boolean))]; if(!topics.length||topics.length>8||!topics.every(validMetadataToken))throw new Error('Invalid balloon topics'); return topics.join(','); }
 async function publish(env, balloon) {
   const key = `b:${balloon.site_key}:${balloon.slug}`;
-  await env.CONBAL_KV.put(key, JSON.stringify({ balloonId: balloon.id, html: balloon.html, css: balloon.css, size: balloon.size }));
+  await env.CONBAL_KV.put(key, JSON.stringify({ balloonId: balloon.id, html: balloon.html, css: balloon.css, size: balloon.size, editorial_type: balloon.editorial_type || defaultEditorialType, topics: balloon.topics || defaultContext }));
 }
 async function createSession(env, user) { const value=token(16); await env.CONBAL_KV.put(`s:${value}`,JSON.stringify({id:user.id,email:user.email}),{expirationTtl:604800}); return value; }
 async function googleAuth(request, env, url) {
@@ -116,9 +130,52 @@ async function analytics(env, user, selectedSiteId) {
   return {account,sites,selected_site:{...site,balloons}};
 }
 
+function randomIndex(max) {
+  const upperBound=0x100000000-(0x100000000%max); const value=new Uint32Array(1);
+  do { crypto.getRandomValues(value); } while(value[0]>=upperBound);
+  return value[0]%max;
+}
+function randomOrder(items) { const ordered=[...items]; for(let index=ordered.length-1;index>0;index--){const swap=randomIndex(index+1);[ordered[index],ordered[swap]]=[ordered[swap],ordered[index]];} return ordered; }
+function sampleRequest(url) {
+  const raw=url.searchParams.get('slots'); if(!raw||raw.length>4096) importError('Invalid sample slots'); let slots;
+  try { slots=JSON.parse(raw); } catch { importError('Invalid sample slots'); }
+  if(!Array.isArray(slots)||slots.length<1||slots.length>8)importError('Sample requests need 1 to 8 slots');
+  const ids=new Set(); const cleaned=slots.map(slot=>{
+    if(!slot||typeof slot!=='object'||Array.isArray(slot)||typeof slot.id!=='string'||!/^[A-Za-z0-9_-]{1,48}$/.test(slot.id)||ids.has(slot.id)||!fixedSizes.has(slot.size)||!Array.isArray(slot.topics)||slot.topics.length<1||slot.topics.length>8||!Array.isArray(slot.editorial_types)||slot.editorial_types.length<1||slot.editorial_types.length>editorialTypes.size)importError('Invalid sample slot');
+    const topics=[...new Set(slot.topics)]; const types=[...new Set(slot.editorial_types)]; if(!topics.every(validMetadataToken)||!types.every(type=>editorialTypes.has(type)))importError('Invalid sample slot'); ids.add(slot.id); return {id:slot.id,size:slot.size,topics,editorial_types:types};
+  });
+  const nonce=url.searchParams.get('nonce'); if(nonce!==null&&(!/^[A-Za-z0-9_-]{1,128}$/.test(nonce)))importError('Invalid sample nonce');
+  return cleaned;
+}
+async function sampleCandidates(env, siteKey, slot) {
+  const placeholders=slot.editorial_types.map(()=>'?').join(',');
+  return (await env.DB.prepare(`SELECT b.id,b.slug,b.size,b.editorial_type,b.topics FROM balloons b JOIN sites s ON s.id=b.site_id WHERE s.site_key=? AND b.status='published' AND b.size=? AND b.editorial_type IN (${placeholders})`).bind(siteKey,slot.size,...slot.editorial_types).all()).results;
+}
+function matchesTopics(candidate, topics) { const candidateTopics=String(candidate.topics||defaultContext).split(','); return topics.some(topic=>candidateTopics.includes(topic)); }
+async function sampleDelivery(request, env, url, context, siteKey) {
+  if(request.method!=='GET')return fail('Method not allowed',405);
+  const slots=sampleRequest(url), selectedIds=new Set(), delivered=[], output=Object.create(null);
+  for(const slot of slots){
+    const candidates=await sampleCandidates(env,siteKey,slot);
+    const contextual=candidates.filter(candidate=>!selectedIds.has(candidate.id)&&matchesTopics(candidate,slot.topics));
+    const fallback=candidates.filter(candidate=>!selectedIds.has(candidate.id)&&!contextual.some(item=>item.id===candidate.id)&&matchesTopics(candidate,[defaultContext]));
+    let selected=null, value=null;
+    for(const candidate of [...randomOrder(contextual),...randomOrder(fallback)]){
+      const payload=await env.CONBAL_KV.get(`b:${siteKey}:${candidate.slug}`,'json');
+      if(!payload||payload.size!==candidate.size)continue;
+      selected=candidate; value=payload; break;
+    }
+    if(!selected||!value)continue;
+    selectedIds.add(selected.id); delivered.push({slug:selected.slug,value}); output[slot.id]={slug:selected.slug,size:selected.size,editorial_type:selected.editorial_type,html:value.html,css:value.css||''};
+  }
+  if(delivered.length){const work=recordDeliveries(env,siteKey,delivered).catch(error=>console.error('delivery counter failed',error));if(context?.waitUntil)context.waitUntil(work);else await work;}
+  return json({slots:output},{headers:{'access-control-allow-origin':'*','cache-control':'no-store, max-age=0'}});
+}
 async function delivery(request, env, url, context) {
+  const parts = url.pathname.split('/').filter(Boolean); const siteKey = parts[1];
+  if(parts.length===3&&parts[2]==='_sample'){if(!validSiteKey(siteKey))return fail('Not found',404);return sampleDelivery(request,env,url,context,siteKey);}
   if (request.method !== 'GET') return fail('Method not allowed', 405);
-  const parts = url.pathname.split('/').filter(Boolean); const siteKey = parts[1]; const slugs = [...new Set((parts[2] || '').split(',').filter(validSlug))].slice(0, 30);
+  const slugs = [...new Set((parts[2] || '').split(',').filter(validSlug))].slice(0, 30);
   if (parts.length !== 3 || !validSiteKey(siteKey) || !slugs.length) return fail('Not found', 404);
   const values = await Promise.all(slugs.map(slug => env.CONBAL_KV.get(`b:${siteKey}:${slug}`, 'json')));
   const delivered=slugs.map((slug,i)=>({slug,value:values[i]})).filter(item=>item.value);
@@ -157,13 +214,17 @@ async function api(request, env, url) {
   let match = path.match(/^\/api\/sites\/([^/]+)$/);
   if (match && method === 'PATCH') { const site=await ownerSite(env,user,match[1]), {name}=await body(request); if(typeof name !== 'string'||!name.trim()||name.length>120)return fail('Enter a site name'); await env.DB.prepare('UPDATE sites SET name=? WHERE id=?').bind(name.trim(),site.id).run(); return json({ok:true}); }
   if (match && method === 'DELETE') { const site=await ownerSite(env,user,match[1]); const bs=(await env.DB.prepare('SELECT slug FROM balloons WHERE site_id=?').bind(site.id).all()).results; await Promise.all(bs.map(b=>env.CONBAL_KV.delete(`b:${site.site_key}:${b.slug}`))); await env.DB.batch([env.DB.prepare('DELETE FROM balloon_delivery_counts WHERE balloon_id IN (SELECT id FROM balloons WHERE site_id=?)').bind(site.id),env.DB.prepare('DELETE FROM balloons WHERE site_id=?').bind(site.id),env.DB.prepare('DELETE FROM sites WHERE id=?').bind(site.id)]); return json({ok:true}); }
+  match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/metadata\/import$/);
+  if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const metadata=csvMetadataRows(await csvBody(request)); const balloons=(await env.DB.prepare('SELECT * FROM balloons WHERE site_id=?').bind(site.id).all()).results, bySlug=new Map(balloons.map(balloon=>[balloon.slug,balloon])); for(const item of metadata)if(!bySlug.has(item.slug))return fail(`Row ${item.sourceRow}: balloon slug "${item.slug}" does not exist for this site`,409); const updates=metadata.map(({sourceRow,...item})=>({...item,balloon:bySlug.get(item.slug)})); try{await env.DB.batch(updates.map(update=>env.DB.prepare("UPDATE balloons SET editorial_type=?,topics=?,updated_at=datetime('now') WHERE id=?").bind(update.editorial_type,update.topics,update.balloon.id)));await Promise.all(updates.filter(update=>update.balloon.status==='published').map(update=>publish(env,{...update.balloon,...update,site_key:site.site_key})));}catch(error){console.error('balloon metadata import failed',error);return fail('Unable to update balloon metadata',500);} return json({updated:updates.length}); }
+  match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/publish-all$/);
+  if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const drafts=(await env.DB.prepare("SELECT * FROM balloons WHERE site_id=? AND status='draft'").bind(site.id).all()).results; if(drafts.length>maxImportRows)return fail(`Publish at most ${maxImportRows} draft balloons at a time`,413); const written=[]; try{await Promise.all(drafts.map(async balloon=>{await publish(env,{...balloon,site_key:site.site_key});written.push(balloon.slug);}));if(drafts.length)await env.DB.batch(drafts.map(balloon=>env.DB.prepare("UPDATE balloons SET status='published',updated_at=datetime('now') WHERE id=?").bind(balloon.id)));}catch(error){await Promise.allSettled(written.map(slug=>env.CONBAL_KV.delete(`b:${site.site_key}:${slug}`)));console.error('balloon bulk publish failed',error);return fail('Unable to publish balloons',500);} return json({published:drafts.length}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/import$/);
-  if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const imported=csvImportRows(await csvBody(request)); const existing=(await env.DB.prepare('SELECT slug FROM balloons WHERE site_id=?').bind(site.id).all()).results.map(row=>row.slug); const existingSlugs=new Set(existing); for(const balloon of imported)if(existingSlugs.has(balloon.slug))return fail(`Row ${balloon.sourceRow}: a balloon with slug "${balloon.slug}" already exists for this site`,409); const balloons=imported.map(({sourceRow,...balloon})=>({id:id(),site_id:site.id,...balloon,status:'draft'})); try{await env.DB.batch(balloons.map(balloon=>env.DB.prepare("INSERT INTO balloons (id,site_id,slug,title,html,css,size,status) VALUES (?,?,?,?,?,?,?,?)").bind(balloon.id,balloon.site_id,balloon.slug,balloon.title,balloon.html,balloon.css,balloon.size,balloon.status)));}catch(error){if(isBalloonSlugConflict(error))return fail('A balloon with one of these slugs was created concurrently; no balloons were imported',409);console.error('balloon import failed',error);return fail('Unable to import balloons; no changes were made',500);} return json({imported:balloons.length,items:balloons},{status:201}); }
+  if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const imported=csvImportRows(await csvBody(request)); const existing=(await env.DB.prepare('SELECT slug FROM balloons WHERE site_id=?').bind(site.id).all()).results.map(row=>row.slug); const existingSlugs=new Set(existing); for(const balloon of imported)if(existingSlugs.has(balloon.slug))return fail(`Row ${balloon.sourceRow}: a balloon with slug "${balloon.slug}" already exists for this site`,409); const balloons=imported.map(({sourceRow,...balloon})=>({id:id(),site_id:site.id,...balloon,status:'draft'})); try{await env.DB.batch(balloons.map(balloon=>env.DB.prepare("INSERT INTO balloons (id,site_id,slug,title,html,css,size,editorial_type,topics,status) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(balloon.id,balloon.site_id,balloon.slug,balloon.title,balloon.html,balloon.css,balloon.size,balloon.editorial_type,balloon.topics,balloon.status)));}catch(error){if(isBalloonSlugConflict(error))return fail('A balloon with one of these slugs was created concurrently; no balloons were imported',409);console.error('balloon import failed',error);return fail('Unable to import balloons; no changes were made',500);} return json({imported:balloons.length,items:balloons},{status:201}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons$/);
   if (match && method === 'GET') { const site=await ownerSite(env,user,match[1]); return json((await env.DB.prepare('SELECT * FROM balloons WHERE site_id=? ORDER BY updated_at DESC').bind(site.id).all()).results); }
-  if (match && method === 'POST') { const site=await ownerSite(env,user,match[1]); const b={id:id(),site_id:site.id,...cleanBalloon(await body(request))}; try { await env.DB.prepare('INSERT INTO balloons (id,site_id,slug,title,html,css,size) VALUES (?,?,?,?,?,?,?)').bind(b.id,b.site_id,b.slug,b.title,b.html,b.css,b.size).run(); } catch{return fail('That slug already exists for this site',409)} return json(b,{status:201}); }
+  if (match && method === 'POST') { const site=await ownerSite(env,user,match[1]); const b={id:id(),site_id:site.id,...cleanBalloon(await body(request))}; try { await env.DB.prepare('INSERT INTO balloons (id,site_id,slug,title,html,css,size,editorial_type,topics) VALUES (?,?,?,?,?,?,?,?,?)').bind(b.id,b.site_id,b.slug,b.title,b.html,b.css,b.size,b.editorial_type,b.topics).run(); } catch{return fail('That slug already exists for this site',409)} return json(b,{status:201}); }
   match = path.match(/^\/api\/balloons\/([^/]+)(?:\/(publish|unpublish))?$/);
-  if (match) { const balloon=await ownerBalloon(env,user,match[1]); if(match[2]==='publish'&&method==='POST'){await publish(env,balloon);await env.DB.prepare("UPDATE balloons SET status='published',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(match[2]==='unpublish'&&method==='POST'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.prepare("UPDATE balloons SET status='draft',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(!match[2]&&method==='PATCH'){const b=cleanBalloon(await body(request));try{await env.DB.prepare("UPDATE balloons SET title=?,slug=?,html=?,css=?,size=?,updated_at=datetime('now') WHERE id=?").bind(b.title,b.slug,b.html,b.css,b.size,balloon.id).run()}catch{return fail('That slug already exists for this site',409)}if(balloon.status==='published'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await publish(env,{...balloon,...b})}return json({ok:true})} if(!match[2]&&method==='DELETE'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.batch([env.DB.prepare('DELETE FROM balloon_delivery_counts WHERE balloon_id=?').bind(balloon.id),env.DB.prepare('DELETE FROM balloons WHERE id=?').bind(balloon.id)]);return json({ok:true})} }
+  if (match) { const balloon=await ownerBalloon(env,user,match[1]); if(match[2]==='publish'&&method==='POST'){await publish(env,balloon);await env.DB.prepare("UPDATE balloons SET status='published',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(match[2]==='unpublish'&&method==='POST'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.prepare("UPDATE balloons SET status='draft',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(!match[2]&&method==='PATCH'){const b=cleanBalloon({...balloon,...await body(request)});try{await env.DB.prepare("UPDATE balloons SET title=?,slug=?,html=?,css=?,size=?,editorial_type=?,topics=?,updated_at=datetime('now') WHERE id=?").bind(b.title,b.slug,b.html,b.css,b.size,b.editorial_type,b.topics,balloon.id).run()}catch{return fail('That slug already exists for this site',409)}if(balloon.status==='published'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await publish(env,{...balloon,...b})}return json({ok:true})} if(!match[2]&&method==='DELETE'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.batch([env.DB.prepare('DELETE FROM balloon_delivery_counts WHERE balloon_id=?').bind(balloon.id),env.DB.prepare('DELETE FROM balloons WHERE id=?').bind(balloon.id)]);return json({ok:true})} }
   return fail('Not found', 404);
 }
 function secure(response) { const h=new Headers(response.headers);h.set('x-content-type-options','nosniff');h.set('strict-transport-security','max-age=31536000; includeSubDomains');return new Response(response.body,{status:response.status,statusText:response.statusText,headers:h}); }

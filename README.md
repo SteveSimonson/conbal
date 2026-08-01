@@ -19,7 +19,12 @@ Conbal delivers owner-authored HTML/CSS content balloons to any site. Cloudflare
    npx wrangler d1 execute conbal-db --remote --file=migrations/002_delivery_analytics.sql
    ```
 
-   A database already upgraded through `001_google_oauth.sql` needs only `002_delivery_analytics.sql` before deploying the analytics Worker.
+   A database already upgraded through `002_delivery_analytics.sql` needs the
+   dynamic editorial metadata upgrade before deploying the sampling Worker:
+
+   ```sh
+   npx wrangler d1 execute conbal-db --remote --file=migrations/003_balloon_sampling_metadata.sql
+   ```
 
 4. Optionally create `.dev.vars` from `.dev.vars.example` and set `SIGNUP_INVITE_CODE` to restrict account creation.
 5. Run `npm run validate`; it intentionally fails while the binding IDs are placeholders.
@@ -43,6 +48,29 @@ The login page sends an invite code to Conbal over `POST`, not in a URL. When `S
 Each account can own multiple sites. The dashboard site selector keeps balloon creation, listing, and CSV imports scoped to the selected site.
 
 Download `/admin/example-balloons.csv` from the dashboard and keep the required columns `title,slug,size,html,css`. The dashboard also provides `/admin/content-balloon-csv-llm-guide.md`, an exhaustive, downloadable generation contract and prompt template for other LLMs. Imports accept standard quoted CSV fields, including commas, doubled quotes, and embedded newlines. A file may contain up to 100 balloons and 512 KB; the whole import is validated before one atomic write. Imported balloons are always drafts and never overwrite or publish existing slugs.
+
+Editorial libraries may add the optional `editorial_type` and `topics` columns.
+The dashboard can also apply a metadata-only `slug,editorial_type,topics` CSV
+to existing balloons, and can publish all reviewed drafts for the selected
+site. Topic lists contain up to eight comma-separated lowercase tags; omitted
+metadata defaults to `did_you_know` and `general`.
+
+## Dynamic editorial sampling
+
+Adaptive pages can request one randomized deck per page load:
+
+```http
+GET /b/{siteKey}/_sample?nonce={requestId}&slots={urlEncodedJson}
+```
+
+`slots` is a JSON array of one to eight objects with `id`, `size`, `topics`,
+and `editorial_types`. Conbal selects distinct published balloons that match
+the exact requested size, prefers topic matches, falls back to the `general`
+topic, and returns `{ "slots": { "slot-id": { "slug", "size",
+"editorial_type", "html", "css" } } }`. Selection uses server-side WebCrypto
+randomness, responses are `no-store`, and the nonce prevents intermediaries
+from coalescing page-load requests. Missing candidates are omitted so host
+pages can fail closed. The legacy explicit-slug endpoint remains unchanged.
 
 ## Delivery analytics
 
