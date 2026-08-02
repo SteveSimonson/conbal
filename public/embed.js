@@ -141,7 +141,13 @@
   function pageSlots(root, kind) {
     const words = textOf(root).split(/\s+/).filter(Boolean).length;
     if (words < 180 || kind === 'blocked') return [];
-    const target = Math.min(8, Math.max(3, 2 + Math.floor(words / 350)));
+    // The page determines its own editorial capacity. Start with one useful
+    // insertion, add another roughly every 360 words beyond the first 180,
+    // and let the available semantic anchors constrain the result. Eight is
+    // only a hard abuse/readability ceiling inherited from the v2 contract;
+    // there is no arbitrary minimum of three.
+    const wordCapacity = 1 + Math.floor(Math.max(0, words - 180) / 360);
+    const desired = Math.min(8, wordCapacity);
     const sections = [...root.querySelectorAll('section, article')]
       .filter(node => visible(node) && textOf(node).length >= 80 && !node.parentElement?.closest('section, article'));
     const headings = [...root.querySelectorAll('h2, h3')]
@@ -149,12 +155,13 @@
       .filter(node => textOf(node).length >= 8)
       .filter(node => !node.closest('section, article'));
     const candidates = [...new Set([...sections, ...headings])];
-    if (candidates.length < target) {
+    if (candidates.length < desired) {
       const paragraphs = [...root.querySelectorAll('p')]
         .filter(node => visible(node) && textOf(node).length >= 80);
       candidates.push(...paragraphs.filter(node => !candidates.includes(node)));
     }
     if (!candidates.length) return [];
+    const target = Math.min(desired, candidates.length);
     const picked = [];
     for (let index = 0; index < Math.min(target, candidates.length); index += 1) {
       const candidate = candidates[Math.round((index * (candidates.length - 1)) / Math.max(1, target - 1))];

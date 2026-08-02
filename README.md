@@ -88,18 +88,23 @@ site key into the tag:
 ```
 
 The automatic runtime reads the visible page title, headings, path, and text
-density, then chooses three to eight safe semantic locations. It requests one
-fresh structured deck from Smart Delivery v2, remembers recent slugs in the
-browser, and renders host-native text cards with no owner HTML or CSS. It skips
-checkout, account, admin, navigation, forms, and pages that are too short to
-benefit. If delivery fails or a slot cannot be filled, that slot is removed and
-the host page is unchanged. For single-page applications, route changes are
-observed automatically.
+density, then lets the page determine how many insertions it can support. It
+starts with one useful insertion for a qualifying page, adds another roughly
+every 360 words, and caps the result by the number of safe semantic anchors.
+The v2 contract retains an eight-slot abuse/readability ceiling, but there is
+no arbitrary minimum of three. It requests one fresh structured deck, remembers
+recent slugs in the browser, and renders host-native text cards with no owner
+HTML or CSS. It skips checkout, account, admin, navigation, forms, and pages
+that are too short to benefit. If delivery fails or a slot cannot be filled,
+that slot is removed and the host page is unchanged. For single-page
+applications, route changes are observed automatically.
 
-Automatic cards load their styles from `https://conbal.us/embed.css`; sites
-using a Content-Security-Policy should allow that origin in `style-src` (for
-example, `style-src 'self' https://conbal.us`). The loader does not inject an
-inline style tag or inline style attributes for automatic cards.
+Automatic cards load their styles from `https://conbal.us/embed.css` and fetch
+content from `https://conbal.us`; sites using a Content-Security-Policy should
+allow that origin in both `style-src` and `connect-src` (for example,
+`style-src 'self' https://conbal.us; connect-src 'self' https://conbal.us`).
+The loader does not inject an inline style tag or inline style attributes for
+automatic cards.
 
 Use `data-conbal-managed="true"` on a host root when the site has its own
 renderer and should opt out of automatic placement while keeping the same
