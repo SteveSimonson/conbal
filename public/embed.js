@@ -317,7 +317,7 @@
       const status = await runAuto(origin, site);
       if (status === 'started' || status === 'empty') onContentChanged?.(contentSignature());
       if (status === 'empty' && attempt < maxAttempts && generation === autoSchedule) {
-        scheduleAuto(origin, site, generation, attempt + 1);
+        scheduleAuto(origin, site, generation, attempt + 1, undefined, onContentChanged);
       }
     }, delay);
   }

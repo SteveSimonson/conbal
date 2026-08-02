@@ -321,4 +321,84 @@ test('SPA navigation waits for replacement content before sampling again', async
   main.textContent = main.innerText;
   await drain();
   assert.equal(requests.length, 2);
+
+  // Some routers commit the next view before they update the URL. The
+  // persistent last-delivered signature must still treat this as a new page.
+  heading.innerText = 'A pre-rendered guide';
+  heading.textContent = 'A pre-rendered guide';
+  main.innerText = 'Pre-rendered page content '.repeat(90);
+  main.textContent = main.innerText;
+  location.href = 'https://host.example/guide/prerendered';
+  location.pathname = '/guide/prerendered';
+  history.pushState();
+  await drain();
+  assert.equal(requests.length, 3);
+
+  // Even a same-prefix route must eventually make a best-effort request
+  // rather than leaving the new page permanently empty.
+  location.href = 'https://host.example/guide/same-prefix';
+  location.pathname = '/guide/same-prefix';
+  history.pushState();
+  for (let attempt = 0; attempt <= 8; attempt += 1) await drain();
+  assert.equal(requests.length, 4);
+});
+
+test('empty initial shells update the remembered signature before later routes', async () => {
+  const { document, main, heading } = autoDocument();
+  main.innerText = 'Loading';
+  main.textContent = 'Loading';
+  heading.innerText = 'Loading';
+  heading.textContent = 'Loading';
+  const timers = [];
+  const requests = [];
+  const location = { href: 'https://host.example/loading', pathname: '/loading' };
+  const history = { pushState() {}, replaceState() {} };
+  const context = {
+    document,
+    fetch: async (url, init) => {
+      requests.push({ url, body: JSON.parse(init.body) });
+      return { ok: true, json: async () => ({ assignments: {
+        'auto-1': { role: 'inline-note', budget: 'standard-v1', editorial_type: 'did_you_know', slug: 'fresh-one', content: { headline: 'A useful fact', body: 'A useful body.' } },
+        'auto-2': { role: 'section-break', budget: 'compact-v1', editorial_type: 'care_tip', slug: 'fresh-two', content: { headline: 'A care note', body: 'A care body.' } },
+        'auto-3': { role: 'aside-note', budget: 'compact-v1', editorial_type: 'fun_fact', slug: 'fresh-three', content: { headline: 'A fun fact', body: 'A fun body.' } },
+      } }) };
+    },
+    URL,
+    location,
+    localStorage: { getItem: () => '[]', setItem: () => {} },
+    history,
+    window: { addEventListener() {} },
+    setTimeout: callback => { timers.push(callback); return timers.length; },
+    clearTimeout: () => {},
+    AbortController,
+    crypto: { randomUUID: () => 'page-view-123' },
+  };
+  vm.runInNewContext(source, context);
+  const drain = async () => {
+    const callback = timers.shift();
+    assert.ok(callback, 'expected a scheduled automatic run');
+    callback();
+    await flush();
+  };
+
+  await drain();
+  assert.equal(requests.length, 0);
+  heading.innerText = 'Loaded guide';
+  heading.textContent = 'Loaded guide';
+  main.innerText = 'Loaded page content '.repeat(90);
+  main.textContent = main.innerText;
+  await drain();
+  assert.equal(requests.length, 1);
+
+  location.href = 'https://host.example/loaded/next';
+  location.pathname = '/loaded/next';
+  history.pushState();
+  await drain();
+  assert.equal(requests.length, 1, 'the loaded page should be treated as the outgoing page');
+  heading.innerText = 'Next guide';
+  heading.textContent = 'Next guide';
+  main.innerText = 'Next page content '.repeat(90);
+  main.textContent = main.innerText;
+  await drain();
+  assert.equal(requests.length, 2);
 });
