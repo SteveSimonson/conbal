@@ -72,6 +72,36 @@ metadata defaults to `did_you_know` and `general`.
 
 ## Container-safe embeds
 
+### Universal automatic integration
+
+For a new site, the only required installation is one script tag. Create the
+site in the Conbal dashboard, publish its editorial inventory, and paste the
+site key into the tag:
+
+```html
+<script
+  defer
+  src="https://conbal.us/embed.js"
+  data-conbal-site="YOUR_SITE_KEY"
+  data-conbal-auto>
+</script>
+```
+
+The automatic runtime reads the visible page title, headings, path, and text
+density, then chooses three to eight safe semantic locations. It requests one
+fresh structured deck from Smart Delivery v2, remembers recent slugs in the
+browser, and renders host-native text cards with no owner HTML or CSS. It skips
+checkout, account, admin, navigation, forms, and pages that are too short to
+benefit. If delivery fails or a slot cannot be filled, that slot is removed and
+the host page is unchanged. For single-page applications, route changes are
+observed automatically.
+
+Use `data-conbal-managed="true"` on a host root when the site has its own
+renderer and should opt out of automatic placement while keeping the same
+loader available for explicit slots.
+
+The existing explicit-slot integration remains supported:
+
 Use `responsive` unless the host page has deliberately reserved an exact-size
 container:
 
