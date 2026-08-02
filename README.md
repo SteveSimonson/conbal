@@ -26,9 +26,24 @@ Conbal delivers owner-authored HTML/CSS content balloons to any site. Cloudflare
    npx wrangler d1 execute conbal-db --remote --file=migrations/003_balloon_sampling_metadata.sql
    ```
 
+   A database upgraded through `003_balloon_sampling_metadata.sql` must create
+   the bounded Smart Delivery index before the v2 Worker is deployed:
+
+   ```sh
+   npx wrangler d1 execute conbal-db --remote --file=migrations/004_smart_delivery_index.sql
+   ```
+
 4. Optionally create `.dev.vars` from `.dev.vars.example` and set `SIGNUP_INVITE_CODE` to restrict account creation.
 5. Run `npm run validate`; it intentionally fails while the binding IDs are placeholders.
-6. Deploy with `npm run deploy`, then verify `/api/health`, signup, login, site creation, balloon publishing, and delivery from `/b/<site-key>/<slug>`.
+6. Deploy with `npm run deploy`. For every site that already has published
+   inventory, sign in as its owner and call
+   `POST /api/sites/<site-id>/balloons/reindex` once. Require `skipped: 0` and
+   confirm `indexed` equals the published-balloon count. This backfill is
+   mandatory; an empty result means v2 correctly has no indexed inventory.
+7. Verify `/api/health`, signup, login, site creation, balloon publishing, v1
+   delivery from `/b/<site-key>/<slug>`, and a structured v2 request to
+   `/v2/b/<site-key>/sample`. The v2 response must be `200`, CORS-readable, and
+   contain plain-text assignments for known eligible inventory.
 
 ## Google login
 

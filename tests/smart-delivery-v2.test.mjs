@@ -210,6 +210,21 @@ test('v2 extracts a safe title fallback and enforces compact copy budgets', asyn
   assert.doesNotMatch(selected.content.body, /Hidden|also hidden|<p>|<svg>/);
 });
 
+test('v2 treats the database title fallback as text rather than markup', async () => {
+  const source = {
+    id: 'plain-title',
+    slug: 'plain-title',
+    title: '2 < 3 bamboo facts',
+    html: '<p>A valid body lets the stored plain-text title serve as the headline.</p>',
+    editorial_type: 'did_you_know',
+    topics: 'home',
+  };
+  const { env } = fakeEnvironment([source]);
+  const response = await worker.fetch(v2Request(), env, {});
+
+  assert.equal((await response.json()).assignments.primary.content.headline, '2 < 3 bamboo facts');
+});
+
 test('v2 understands the existing iBamboo strong-heading templates without leaking chrome', async () => {
   const source = {
     id: 'legacy-template',

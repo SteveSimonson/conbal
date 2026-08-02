@@ -95,7 +95,8 @@ async function publish(env, balloon) {
   await env.CONBAL_KV.put(key, JSON.stringify({ balloonId: balloon.id, html: balloon.html, css: balloon.css, size: balloon.size, editorial_type: balloon.editorial_type || defaultEditorialType, topics: balloon.topics || defaultContext }));
   const copy=structuredCopy(balloon,'standard-v1');
   await env.DB.prepare('DELETE FROM smart_delivery_items WHERE balloon_id=?').bind(balloon.id).run();
-  if(copy.headline&&copy.body){const topics=String(balloon.topics||defaultContext).split(',').map(topic=>topic.trim()).filter(validMetadataToken);await env.DB.batch(topics.map(topic=>env.DB.prepare('INSERT INTO smart_delivery_items (balloon_id,site_key,slug,editorial_type,topic,headline,body) VALUES (?,?,?,?,?,?,?)').bind(balloon.id,balloon.site_key,balloon.slug,balloon.editorial_type||defaultEditorialType,topic,copy.headline,copy.body)));}
+  if(copy.headline&&copy.body){const topics=String(balloon.topics||defaultContext).split(',').map(topic=>topic.trim()).filter(validMetadataToken);await env.DB.batch(topics.map(topic=>env.DB.prepare('INSERT INTO smart_delivery_items (balloon_id,site_key,slug,editorial_type,topic,headline,body) VALUES (?,?,?,?,?,?,?)').bind(balloon.id,balloon.site_key,balloon.slug,balloon.editorial_type||defaultEditorialType,topic,copy.headline,copy.body)));return true;}
+  return false;
 }
 async function createSession(env, user) { const value=token(16); await env.CONBAL_KV.put(`s:${value}`,JSON.stringify({id:user.id,email:user.email}),{expirationTtl:604800}); return value; }
 async function googleAuth(request, env, url) {
@@ -267,11 +268,12 @@ function htmlParts(value) {
   return {all:clean(visible.join(' ')),bodies,headings,strong};
 }
 function htmlText(value) { return htmlParts(value).all; }
+function storedText(value) { return decodeEntities(String(value||'')).replace(/\s+/g,' ').trim(); }
 function structuredCopy(candidate, budgetName) {
   const budget=structuredBudgets.get(budgetName);
   const limit=(text,max)=>text.slice(0,max).replace(/[\uD800-\uDBFF]$/,'').trim();
   if(typeof candidate.headline==='string'&&typeof candidate.body==='string')return {headline:limit(candidate.headline,budget.headline),body:limit(candidate.body,budget.body)};
-  const parts=htmlParts(candidate.html), headline=parts.headings[0]||parts.strong[0]||htmlText(candidate.title), fragments=parts.bodies
+  const parts=htmlParts(candidate.html), headline=parts.headings[0]||parts.strong[0]||storedText(candidate.title), fragments=parts.bodies
     .filter(text=>text&&text!==headline&&!text.includes(headline)&&!/^(?:\d{1,3}|iB|竹)$/i.test(text)&&!/^(?:(?:iBamboo\s+)?field note|field guide\s*\/\s*iBamboo|bamboo fact(?:\s*[·/]\s*\d+)?)$/i.test(text)), bodyText=fragments.filter(text=>text.length>=12).sort((left,right)=>right.length-left.length)[0]||'';
   return {headline:limit(headline,budget.headline),body:limit(bodyText,budget.body)};
 }
@@ -385,7 +387,7 @@ async function api(request, env, url) {
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/metadata\/import$/);
   if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const metadata=csvMetadataRows(await csvBody(request)); const balloons=(await env.DB.prepare('SELECT * FROM balloons WHERE site_id=?').bind(site.id).all()).results, bySlug=new Map(balloons.map(balloon=>[balloon.slug,balloon])); for(const item of metadata)if(!bySlug.has(item.slug))return fail(`Row ${item.sourceRow}: balloon slug "${item.slug}" does not exist for this site`,409); const updates=metadata.map(({sourceRow,...item})=>({...item,balloon:bySlug.get(item.slug)})); try{await env.DB.batch(updates.map(update=>env.DB.prepare("UPDATE balloons SET editorial_type=?,topics=?,updated_at=datetime('now') WHERE id=?").bind(update.editorial_type,update.topics,update.balloon.id)));await Promise.all(updates.filter(update=>update.balloon.status==='published').map(update=>publish(env,{...update.balloon,...update,site_key:site.site_key})));}catch(error){console.error('balloon metadata import failed',error);return fail('Unable to update balloon metadata',500);} return json({updated:updates.length}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/reindex$/);
-  if (match) { if(method!=='POST')return fail('Method not allowed',405);const site=await ownerSite(env,user,match[1]),balloons=(await env.DB.prepare("SELECT * FROM balloons WHERE site_id=? AND status='published' ORDER BY id").bind(site.id).all()).results;for(const balloon of balloons)await publish(env,{...balloon,site_key:site.site_key});return json({indexed:balloons.length}); }
+  if (match) { if(method!=='POST')return fail('Method not allowed',405);const site=await ownerSite(env,user,match[1]),balloons=(await env.DB.prepare("SELECT * FROM balloons WHERE site_id=? AND status='published' ORDER BY id").bind(site.id).all()).results;let indexed=0;for(const balloon of balloons)if(await publish(env,{...balloon,site_key:site.site_key}))indexed++;return json({indexed,skipped:balloons.length-indexed,total:balloons.length}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/publish-all$/);
   if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const drafts=(await env.DB.prepare("SELECT * FROM balloons WHERE site_id=? AND status='draft'").bind(site.id).all()).results; if(drafts.length>maxImportRows)return fail(`Publish at most ${maxImportRows} draft balloons at a time`,413); const written=[]; try{await Promise.all(drafts.map(async balloon=>{await publish(env,{...balloon,site_key:site.site_key});written.push(balloon.slug);}));if(drafts.length)await env.DB.batch(drafts.map(balloon=>env.DB.prepare("UPDATE balloons SET status='published',updated_at=datetime('now') WHERE id=?").bind(balloon.id)));}catch(error){await Promise.allSettled(written.map(slug=>env.CONBAL_KV.delete(`b:${site.site_key}:${slug}`)));console.error('balloon bulk publish failed',error);return fail('Unable to publish balloons',500);} return json({published:drafts.length}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/import$/);
