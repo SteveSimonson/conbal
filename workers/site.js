@@ -3,11 +3,18 @@ const fixedSizes = new Set(['responsive', '300x250', '336x280', '728x90', '160x6
 const editorialTypes = new Set(['did_you_know', 'fun_fact', 'care_tip', 'design_note', 'material_myth', 'nature_note', 'culture_craft']);
 const sampleLayouts = new Set(['inline', 'panel', 'product-card', 'banner', 'rail', 'fixed']);
 const containerNativeLayouts = new Set(['inline', 'panel', 'product-card']);
+const structuredRoles = new Set(['inline-note', 'section-break', 'grid-tile', 'aside-note']);
+const structuredBudgets = new Map([
+  ['compact-v1', { headline: 48, body: 110 }],
+  ['standard-v1', { headline: 72, body: 180 }],
+]);
 const defaultEditorialType = 'did_you_know';
 const defaultContext = 'general';
 const maxImportBytes = 512000;
 const maxImportRows = 100;
 const maxImportRowChars = 75000;
+const maxStructuredBytes = 32768;
+const maxStructuredCandidatesPerSlot = 16;
 const json = (data, init = {}) => new Response(JSON.stringify(data), { ...init, headers: { 'content-type': 'application/json; charset=utf-8', ...(init.headers || {}) } });
 const fail = (error, status = 400) => json({ error }, { status });
 const id = () => crypto.randomUUID();
@@ -86,6 +93,10 @@ function cleanTopics(value) { const raw=value==null||value===''?defaultContext:S
 async function publish(env, balloon) {
   const key = `b:${balloon.site_key}:${balloon.slug}`;
   await env.CONBAL_KV.put(key, JSON.stringify({ balloonId: balloon.id, html: balloon.html, css: balloon.css, size: balloon.size, editorial_type: balloon.editorial_type || defaultEditorialType, topics: balloon.topics || defaultContext }));
+  const copy=structuredCopy(balloon,'standard-v1');
+  await env.DB.prepare('DELETE FROM smart_delivery_items WHERE balloon_id=?').bind(balloon.id).run();
+  if(copy.headline&&copy.body){const topics=String(balloon.topics||defaultContext).split(',').map(topic=>topic.trim()).filter(validMetadataToken);await env.DB.batch(topics.map(topic=>env.DB.prepare('INSERT INTO smart_delivery_items (balloon_id,site_key,slug,editorial_type,topic,headline,body) VALUES (?,?,?,?,?,?,?)').bind(balloon.id,balloon.site_key,balloon.slug,balloon.editorial_type||defaultEditorialType,topic,copy.headline,copy.body)));return true;}
+  return false;
 }
 async function createSession(env, user) { const value=token(16); await env.CONBAL_KV.put(`s:${value}`,JSON.stringify({id:user.id,email:user.email}),{expirationTtl:604800}); return value; }
 async function googleAuth(request, env, url) {
@@ -188,6 +199,148 @@ async function sampleDelivery(request, env, url, context, siteKey) {
   if(delivered.length){const work=recordDeliveries(env,siteKey,delivered).catch(error=>console.error('delivery counter failed',error));if(context?.waitUntil)context.waitUntil(work);else await work;}
   return json({slots:output},{headers:{'access-control-allow-origin':'*','cache-control':'no-store, max-age=0'}});
 }
+function plainObject(value) { return Boolean(value)&&typeof value==='object'&&!Array.isArray(value); }
+function exactKeys(value, allowed) { return Object.keys(value).every(key=>allowed.has(key)); }
+async function structuredJsonBody(request) {
+  const contentLength=Number(request.headers.get('content-length')||0);
+  if(contentLength>maxStructuredBytes)importError('Smart-delivery request is too large',413);
+  const reader=request.body?.getReader();if(!reader)importError('Expected a JSON body');
+  const chunks=[];let length=0;
+  while(true){const {done,value}=await reader.read();if(done)break;length+=value.byteLength;if(length>maxStructuredBytes){await reader.cancel();importError('Smart-delivery request is too large',413);}chunks.push(value);}
+  const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+  const text=new TextDecoder().decode(bytes);
+  try{return JSON.parse(text);}catch{importError('Expected a JSON body');}
+}
+function structuredRequest(data) {
+  if(!plainObject(data)||!exactKeys(data,new Set(['contract','page_view_id','repeat_policy','exclude_slugs','slots']))||data.contract!=='2.0'||typeof data.page_view_id!=='string'||!/^[A-Za-z0-9._:-]{1,128}$/.test(data.page_view_id)||data.repeat_policy!=='omit'||!Array.isArray(data.slots)||data.slots.length<1||data.slots.length>8)importError('Invalid smart-delivery request');
+  const excluded=data.exclude_slugs===undefined?[]:data.exclude_slugs;
+  if(!Array.isArray(excluded)||excluded.length>30||excluded.some(slug=>!validSlug(slug))||new Set(excluded).size!==excluded.length)importError('Invalid excluded slugs');
+  const ids=new Set();
+  const slots=data.slots.map(slot=>{
+    if(!plainObject(slot)||!exactKeys(slot,new Set(['id','role','topics','editorial_types','budget']))||typeof slot.id!=='string'||!/^[A-Za-z0-9_-]{1,48}$/.test(slot.id)||ids.has(slot.id)||!structuredRoles.has(slot.role)||!structuredBudgets.has(slot.budget))importError('Invalid smart-delivery slot');
+    if(!Array.isArray(slot.topics)||slot.topics.length<1||slot.topics.length>8||!slot.topics.every(validMetadataToken)||!Array.isArray(slot.editorial_types)||slot.editorial_types.length<1||slot.editorial_types.length>editorialTypes.size||!slot.editorial_types.every(type=>editorialTypes.has(type)))importError('Invalid smart-delivery slot');
+    const topics=[...new Set(slot.topics)], types=[...new Set(slot.editorial_types)];
+    if(topics.length!==slot.topics.length||types.length!==slot.editorial_types.length)importError('Invalid smart-delivery slot');
+    ids.add(slot.id);
+    return {id:slot.id,role:slot.role,topics,editorial_types:types,budget:slot.budget};
+  });
+  return {contract:data.contract,pageViewId:data.page_view_id,repeatPolicy:data.repeat_policy,excludedSlugs:new Set(excluded),slots};
+}
+function decodeEntities(value) {
+  const named={amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",nbsp:' ',ndash:'–',mdash:'—',hellip:'…'};
+  return value.replace(/&(?:#(x[0-9a-f]+|\d+)|([a-z][a-z0-9]+));/gi,(entity,numeric,name)=>{
+    if(name)return named[name.toLowerCase()]??entity;
+    const code=numeric[0].toLowerCase()==='x'?Number.parseInt(numeric.slice(1),16):Number.parseInt(numeric,10);
+    return Number.isInteger(code)&&code>0&&code<=0x10ffff&&!(code>=0xd800&&code<=0xdfff)?String.fromCodePoint(code):'�';
+  });
+}
+function htmlParts(value) {
+  const source=String(value||''), unsafe=new Set(['script','style','noscript','template','svg']), rawText=new Set(['script','style']), captures=new Set(['p','span','div','strong','h1','h2','h3','h4','h5','h6']);
+  const stack=[], headings=[], strong=[], bodies=[], visible=[];
+  const clean=text=>decodeEntities(text).replace(/\s+/g,' ').trim();
+  const finish=frame=>{const text=clean(frame.text);if(!text)return;if(/^h[1-6]$/.test(frame.name))headings.push(text);else if(frame.name==='strong')strong.push(text);else if(['p','span','div'].includes(frame.name))bodies.push(text);};
+  for(let index=0;index<source.length;){
+    if(source.startsWith('<!--',index)){const end=source.indexOf('-->',index+4);index=end<0?source.length:end+3;continue;}
+    if(source[index]!=='<'){
+      const end=source.indexOf('<',index), raw=source.slice(index,end<0?source.length:end);
+      if(!stack.some(frame=>frame.unsafe)){visible.push(raw);for(const frame of stack)if(captures.has(frame.name))frame.text+=` ${raw}`;}
+      index=end<0?source.length:end;continue;
+    }
+    let quote='', end=index+1;
+    for(;end<source.length;end++){const char=source[end];if(quote){if(char===quote)quote='';continue;}if(char==='"'||char==="'"){quote=char;continue;}if(char==='>')break;}
+    if(end>=source.length)break;
+    const raw=source.slice(index+1,end).trim(), closing=raw.startsWith('/'), match=raw.match(/^\/?\s*([a-z][a-z0-9-]*)/i), name=match?.[1]?.toLowerCase();
+    index=end+1;if(!name)continue;
+    if(!closing&&unsafe.has(name)){
+      if(rawText.has(name)){const close=new RegExp(`<\\/\\s*${name}\\s*>`,'ig');close.lastIndex=index;const found=close.exec(source);index=found?close.lastIndex:source.length;continue;}
+      let depth=1,cursor=index;
+      while(depth>0&&cursor<source.length){const open=source.indexOf('<',cursor);if(open<0){cursor=source.length;break;}if(source.startsWith('<!--',open)){const commentEnd=source.indexOf('-->',open+4);cursor=commentEnd<0?source.length:commentEnd+3;continue;}let nestedQuote='',nestedEnd=open+1;for(;nestedEnd<source.length;nestedEnd++){const char=source[nestedEnd];if(nestedQuote){if(char===nestedQuote)nestedQuote='';continue;}if(char==='"'||char==="'"){nestedQuote=char;continue;}if(char==='>')break;}if(nestedEnd>=source.length){cursor=source.length;break;}const nestedRaw=source.slice(open+1,nestedEnd).trim(),nestedClosing=nestedRaw.startsWith('/'),nestedName=nestedRaw.match(/^\/?\s*([a-z][a-z0-9-]*)/i)?.[1]?.toLowerCase();if(nestedName===name){if(nestedClosing)depth--;else if(!nestedRaw.endsWith('/'))depth++;}cursor=nestedEnd+1;}
+      index=cursor;continue;
+    }
+    if(closing){
+      const at=stack.map(frame=>frame.name).lastIndexOf(name);if(at<0)continue;
+      const removed=stack.splice(at);for(const frame of removed.reverse())finish(frame);continue;
+    }
+    if(name==='br'||name==='hr'){visible.push(' ');for(const frame of stack)if(captures.has(frame.name))frame.text+=' ';continue;}
+    if(!raw.endsWith('/'))stack.push({name,text:'',unsafe:false});
+  }
+  for(const frame of stack.reverse())finish(frame);
+  return {all:clean(visible.join(' ')),bodies,headings,strong};
+}
+function htmlText(value) { return htmlParts(value).all; }
+function storedText(value) { return decodeEntities(String(value||'')).replace(/\s+/g,' ').trim(); }
+function structuredCopy(candidate, budgetName) {
+  const budget=structuredBudgets.get(budgetName);
+  const limit=(text,max)=>text.slice(0,max).replace(/[\uD800-\uDBFF]$/,'').trim();
+  if(typeof candidate.headline==='string'&&typeof candidate.body==='string')return {headline:limit(candidate.headline,budget.headline),body:limit(candidate.body,budget.body)};
+  const parts=htmlParts(candidate.html), headline=parts.headings[0]||parts.strong[0]||storedText(candidate.title), fragments=parts.bodies
+    .filter(text=>text&&text!==headline&&!text.includes(headline)&&!/^(?:\d{1,3}|iB|竹)$/i.test(text)&&!/^(?:(?:iBamboo\s+)?field note|field guide\s*\/\s*iBamboo|bamboo fact(?:\s*[·/]\s*\d+)?)$/i.test(text)), bodyText=fragments.filter(text=>text.length>=12).sort((left,right)=>right.length-left.length)[0]||'';
+  return {headline:limit(headline,budget.headline),body:limit(bodyText,budget.body)};
+}
+async function structuredInventory(env,siteKey,slots) {
+  const literal=value=>`'${String(value).replaceAll("'","''")}'`, excluded=slots[0]?.excludedSlugs||new Set(), fetchLimit=maxStructuredCandidatesPerSlot+excluded.size, branches=[];
+  for(const slot of slots){const types=slot.editorial_types.map(literal).join(',');for(const topic of new Set([...slot.topics.filter(value=>value!==defaultContext),defaultContext]))branches.push(`SELECT * FROM (SELECT i.balloon_id AS id,i.slug,i.headline,i.body,i.editorial_type,i.topic AS topics FROM smart_delivery_items i JOIN balloons b ON b.id=i.balloon_id AND b.status='published' WHERE i.site_key=${literal(siteKey)} AND i.topic=${literal(topic)} AND i.editorial_type IN (${types}) ORDER BY i.balloon_id LIMIT ${fetchLimit})`);}
+  const rows=(await env.DB.prepare(branches.join(' UNION ALL ')).all()).results, merged=new Map();
+  for(const row of rows){if(excluded.has(row.slug))continue;const current=merged.get(row.id);if(current){current.topics=`${current.topics},${row.topics}`;}else merged.set(row.id,{...row});}
+  return [...merged.values()];
+}
+function stableRank(pageViewId,slotId,slug) {
+  const input=`${pageViewId}\u0000${slotId}\u0000${slug}`;let hash=2166136261;
+  for(let index=0;index<input.length;index++){hash^=input.charCodeAt(index);hash=Math.imul(hash,16777619);}
+  return hash>>>0;
+}
+function structuredCandidateScore(pageViewId,slot,candidate) {
+  if(!slot.editorial_types.includes(candidate.editorial_type))return null;
+  const requested=new Set(slot.topics.filter(topic=>topic!==defaultContext));
+  const candidateTopics=new Set(String(candidate.topics||defaultContext).split(',').map(topic=>topic.trim()).filter(Boolean));
+  const relevance=[...requested].reduce((score,topic)=>score+(candidateTopics.has(topic)?1:0),0);
+  if(relevance===0&&!candidateTopics.has(defaultContext))return null;
+  const tie=(0xffffffff-stableRank(pageViewId,slot.id,candidate.slug))/0x100000000;
+  return 1e9+relevance*1e6+tie;
+}
+function maximumWeightAssignments(weights) {
+  const rows=weights.length, columns=weights[0]?.length||0, u=Array(rows+1).fill(0), v=Array(columns+1).fill(0), p=Array(columns+1).fill(0), way=Array(columns+1).fill(0);
+  for(let row=1;row<=rows;row++){
+    p[0]=row;let column0=0;const min=Array(columns+1).fill(Infinity), used=Array(columns+1).fill(false);
+    do{used[column0]=true;const row0=p[column0];let delta=Infinity,column1=0;
+      for(let column=1;column<=columns;column++)if(!used[column]){const current=-weights[row0-1][column-1]-u[row0]-v[column];if(current<min[column]){min[column]=current;way[column]=column0;}if(min[column]<delta){delta=min[column];column1=column;}}
+      for(let column=0;column<=columns;column++)if(used[column]){u[p[column]]+=delta;v[column]-=delta;}else min[column]-=delta;
+      column0=column1;
+    }while(p[column0]!==0);
+    do{const column1=way[column0];p[column0]=p[column1];column0=column1;}while(column0!==0);
+  }
+  const assignment=Array(rows).fill(-1);for(let column=1;column<=columns;column++)if(p[column])assignment[p[column]-1]=column-1;return assignment;
+}
+async function structuredDigest(pageViewId,slotId,slug) {
+  const bytes=await crypto.subtle.digest('SHA-256',encoder.encode(`${pageViewId}\u0000${slotId}\u0000${slug}`));
+  return Array.from(new Uint8Array(bytes),byte=>byte.toString(16).padStart(2,'0')).join('');
+}
+async function structuredDelivery(request,env,context,siteKey) {
+  if(request.method!=='POST')return fail('Method not allowed',405);
+  const parsed=structuredRequest(await structuredJsonBody(request)), slots=[...parsed.slots].sort((left,right)=>left.id.localeCompare(right.id)).map(slot=>({...slot,excludedSlugs:parsed.excludedSlugs})), inventory=(await structuredInventory(env,siteKey,slots)).filter(candidate=>!parsed.excludedSlugs.has(candidate.slug)).sort((left,right)=>left.slug.localeCompare(right.slug)), delivered=[], output=Object.create(null), copies=new Map(), copyCache=new Map();
+  const weights=slots.map((slot,row)=>[
+    ...inventory.map((candidate,column)=>{const score=structuredCandidateScore(parsed.pageViewId,slot,candidate);if(score===null)return -1e12;const cacheKey=`${candidate.id}:${slot.budget}`;if(!copyCache.has(cacheKey))copyCache.set(cacheKey,structuredCopy(candidate,slot.budget));const copy=copyCache.get(cacheKey);if(!copy?.headline||!copy?.body)return -1e12;copies.set(`${row}:${column}`,copy);return score;}),
+    ...Array.from({length:slots.length},()=>0),
+  ]);
+  const assigned=maximumWeightAssignments(weights);
+  for(let row=0;row<slots.length;row++){
+    const column=assigned[row];if(column<0||column>=inventory.length||weights[row][column]<0)continue;
+    const slot=slots[row],selected=inventory[column],copy=copies.get(`${row}:${column}`);if(!copy)continue;
+    delivered.push({slug:selected.slug,value:{balloonId:selected.id}});
+    output[slot.id]={assignment_id:`v2_${(await structuredDigest(parsed.pageViewId,slot.id,selected.slug)).slice(0,32)}`,slug:selected.slug,role:slot.role,budget:slot.budget,editorial_type:selected.editorial_type,content:copy};
+  }
+  if(delivered.length){const work=recordDeliveries(env,siteKey,delivered).catch(error=>console.error('delivery counter failed',error));if(context?.waitUntil)context.waitUntil(work);else await work;}
+  return json({assignments:output},{headers:{'access-control-allow-origin':'*','cache-control':'no-store, max-age=0'}});
+}
+function structuredCors(response) { const headers=new Headers(response.headers);headers.set('access-control-allow-origin','*');headers.set('access-control-allow-methods','POST, OPTIONS');headers.set('access-control-allow-headers','content-type');headers.set('cache-control','no-store, max-age=0');return new Response(response.body,{status:response.status,statusText:response.statusText,headers}); }
+async function v2Delivery(request,env,url,context) {
+  try{
+    const parts=url.pathname.split('/').filter(Boolean);
+    if(parts.length!==4||parts[0]!=='v2'||parts[1]!=='b'||parts[3]!=='sample'||!validSiteKey(parts[2]))return structuredCors(fail('Not found',404));
+    if(request.method==='OPTIONS')return structuredCors(new Response(null,{status:204,headers:{'access-control-max-age':'86400'}}));
+    return structuredCors(await structuredDelivery(request,env,context,parts[2]));
+  }catch(error){return structuredCors(fail(error.message||'Server error',error.status||500));}
+}
 async function delivery(request, env, url, context) {
   const parts = url.pathname.split('/').filter(Boolean); const siteKey = parts[1];
   if(parts.length===3&&parts[2]==='_sample'){if(!validSiteKey(siteKey))return fail('Not found',404);return sampleDelivery(request,env,url,context,siteKey);}
@@ -230,9 +383,11 @@ async function api(request, env, url) {
   if (path === '/api/sites' && method === 'POST') { const { name } = await body(request); if (typeof name !== 'string' || !name.trim() || name.length > 120) return fail('Enter a site name'); const site = { id: id(), name: name.trim(), site_key: token(9) }; await env.DB.prepare('INSERT INTO sites (id,user_id,name,site_key) VALUES (?,?,?,?)').bind(site.id,user.id,site.name,site.site_key).run(); return json(site,{status:201}); }
   let match = path.match(/^\/api\/sites\/([^/]+)$/);
   if (match && method === 'PATCH') { const site=await ownerSite(env,user,match[1]), {name}=await body(request); if(typeof name !== 'string'||!name.trim()||name.length>120)return fail('Enter a site name'); await env.DB.prepare('UPDATE sites SET name=? WHERE id=?').bind(name.trim(),site.id).run(); return json({ok:true}); }
-  if (match && method === 'DELETE') { const site=await ownerSite(env,user,match[1]); const bs=(await env.DB.prepare('SELECT slug FROM balloons WHERE site_id=?').bind(site.id).all()).results; await Promise.all(bs.map(b=>env.CONBAL_KV.delete(`b:${site.site_key}:${b.slug}`))); await env.DB.batch([env.DB.prepare('DELETE FROM balloon_delivery_counts WHERE balloon_id IN (SELECT id FROM balloons WHERE site_id=?)').bind(site.id),env.DB.prepare('DELETE FROM balloons WHERE site_id=?').bind(site.id),env.DB.prepare('DELETE FROM sites WHERE id=?').bind(site.id)]); return json({ok:true}); }
+  if (match && method === 'DELETE') { const site=await ownerSite(env,user,match[1]); const bs=(await env.DB.prepare('SELECT slug FROM balloons WHERE site_id=?').bind(site.id).all()).results; await Promise.all(bs.map(b=>env.CONBAL_KV.delete(`b:${site.site_key}:${b.slug}`))); await env.DB.batch([env.DB.prepare('DELETE FROM smart_delivery_items WHERE site_key=?').bind(site.site_key),env.DB.prepare('DELETE FROM balloon_delivery_counts WHERE balloon_id IN (SELECT id FROM balloons WHERE site_id=?)').bind(site.id),env.DB.prepare('DELETE FROM balloons WHERE site_id=?').bind(site.id),env.DB.prepare('DELETE FROM sites WHERE id=?').bind(site.id)]); return json({ok:true}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/metadata\/import$/);
   if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const metadata=csvMetadataRows(await csvBody(request)); const balloons=(await env.DB.prepare('SELECT * FROM balloons WHERE site_id=?').bind(site.id).all()).results, bySlug=new Map(balloons.map(balloon=>[balloon.slug,balloon])); for(const item of metadata)if(!bySlug.has(item.slug))return fail(`Row ${item.sourceRow}: balloon slug "${item.slug}" does not exist for this site`,409); const updates=metadata.map(({sourceRow,...item})=>({...item,balloon:bySlug.get(item.slug)})); try{await env.DB.batch(updates.map(update=>env.DB.prepare("UPDATE balloons SET editorial_type=?,topics=?,updated_at=datetime('now') WHERE id=?").bind(update.editorial_type,update.topics,update.balloon.id)));await Promise.all(updates.filter(update=>update.balloon.status==='published').map(update=>publish(env,{...update.balloon,...update,site_key:site.site_key})));}catch(error){console.error('balloon metadata import failed',error);return fail('Unable to update balloon metadata',500);} return json({updated:updates.length}); }
+  match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/reindex$/);
+  if (match) { if(method!=='POST')return fail('Method not allowed',405);const site=await ownerSite(env,user,match[1]),balloons=(await env.DB.prepare("SELECT * FROM balloons WHERE site_id=? AND status='published' ORDER BY id").bind(site.id).all()).results;let indexed=0;for(const balloon of balloons)if(await publish(env,{...balloon,site_key:site.site_key}))indexed++;return json({indexed,skipped:balloons.length-indexed,total:balloons.length}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/publish-all$/);
   if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const drafts=(await env.DB.prepare("SELECT * FROM balloons WHERE site_id=? AND status='draft'").bind(site.id).all()).results; if(drafts.length>maxImportRows)return fail(`Publish at most ${maxImportRows} draft balloons at a time`,413); const written=[]; try{await Promise.all(drafts.map(async balloon=>{await publish(env,{...balloon,site_key:site.site_key});written.push(balloon.slug);}));if(drafts.length)await env.DB.batch(drafts.map(balloon=>env.DB.prepare("UPDATE balloons SET status='published',updated_at=datetime('now') WHERE id=?").bind(balloon.id)));}catch(error){await Promise.allSettled(written.map(slug=>env.CONBAL_KV.delete(`b:${site.site_key}:${slug}`)));console.error('balloon bulk publish failed',error);return fail('Unable to publish balloons',500);} return json({published:drafts.length}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/import$/);
@@ -241,8 +396,8 @@ async function api(request, env, url) {
   if (match && method === 'GET') { const site=await ownerSite(env,user,match[1]); return json((await env.DB.prepare('SELECT * FROM balloons WHERE site_id=? ORDER BY updated_at DESC').bind(site.id).all()).results); }
   if (match && method === 'POST') { const site=await ownerSite(env,user,match[1]); const b={id:id(),site_id:site.id,...cleanBalloon(await body(request))}; try { await env.DB.prepare('INSERT INTO balloons (id,site_id,slug,title,html,css,size,editorial_type,topics) VALUES (?,?,?,?,?,?,?,?,?)').bind(b.id,b.site_id,b.slug,b.title,b.html,b.css,b.size,b.editorial_type,b.topics).run(); } catch{return fail('That slug already exists for this site',409)} return json(b,{status:201}); }
   match = path.match(/^\/api\/balloons\/([^/]+)(?:\/(publish|unpublish))?$/);
-  if (match) { const balloon=await ownerBalloon(env,user,match[1]); if(match[2]==='publish'&&method==='POST'){await publish(env,balloon);await env.DB.prepare("UPDATE balloons SET status='published',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(match[2]==='unpublish'&&method==='POST'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.prepare("UPDATE balloons SET status='draft',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(!match[2]&&method==='PATCH'){const b=cleanBalloon({...balloon,...await body(request)});try{await env.DB.prepare("UPDATE balloons SET title=?,slug=?,html=?,css=?,size=?,editorial_type=?,topics=?,updated_at=datetime('now') WHERE id=?").bind(b.title,b.slug,b.html,b.css,b.size,b.editorial_type,b.topics,balloon.id).run()}catch{return fail('That slug already exists for this site',409)}if(balloon.status==='published'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await publish(env,{...balloon,...b})}return json({ok:true})} if(!match[2]&&method==='DELETE'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.batch([env.DB.prepare('DELETE FROM balloon_delivery_counts WHERE balloon_id=?').bind(balloon.id),env.DB.prepare('DELETE FROM balloons WHERE id=?').bind(balloon.id)]);return json({ok:true})} }
+  if (match) { const balloon=await ownerBalloon(env,user,match[1]); if(match[2]==='publish'&&method==='POST'){await publish(env,balloon);await env.DB.prepare("UPDATE balloons SET status='published',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(match[2]==='unpublish'&&method==='POST'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.batch([env.DB.prepare('DELETE FROM smart_delivery_items WHERE balloon_id=?').bind(balloon.id),env.DB.prepare("UPDATE balloons SET status='draft',updated_at=datetime('now') WHERE id=?").bind(balloon.id)]);return json({ok:true})} if(!match[2]&&method==='PATCH'){const b=cleanBalloon({...balloon,...await body(request)});try{await env.DB.prepare("UPDATE balloons SET title=?,slug=?,html=?,css=?,size=?,editorial_type=?,topics=?,updated_at=datetime('now') WHERE id=?").bind(b.title,b.slug,b.html,b.css,b.size,b.editorial_type,b.topics,balloon.id).run()}catch{return fail('That slug already exists for this site',409)}if(balloon.status==='published'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await publish(env,{...balloon,...b})}return json({ok:true})} if(!match[2]&&method==='DELETE'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.batch([env.DB.prepare('DELETE FROM smart_delivery_items WHERE balloon_id=?').bind(balloon.id),env.DB.prepare('DELETE FROM balloon_delivery_counts WHERE balloon_id=?').bind(balloon.id),env.DB.prepare('DELETE FROM balloons WHERE id=?').bind(balloon.id)]);return json({ok:true})} }
   return fail('Not found', 404);
 }
 function secure(response) { const h=new Headers(response.headers);h.set('x-content-type-options','nosniff');h.set('strict-transport-security','max-age=31536000; includeSubDomains');return new Response(response.body,{status:response.status,statusText:response.statusText,headers:h}); }
-export default { async fetch(request, env, context) { const url=new URL(request.url), host=request.headers.get('host') || url.host; if (host==='www.conbal.us' || (host==='conbal.us' && url.protocol==='http:')) { url.protocol='https:';url.hostname='conbal.us';return Response.redirect(url,301); } try { let response; if(url.pathname.startsWith('/b/'))response=await delivery(request,env,url,context); else if(url.pathname.startsWith('/api/'))response=await api(request,env,url); else response=await env.ASSETS.fetch(request); return secure(response); } catch(error) { return secure(fail(error.message||'Server error',error.status||500)); } } };
+export default { async fetch(request, env, context) { const url=new URL(request.url), host=request.headers.get('host') || url.host; if (host==='www.conbal.us' || (host==='conbal.us' && url.protocol==='http:')) { url.protocol='https:';url.hostname='conbal.us';return Response.redirect(url,301); } try { let response; if(url.pathname.startsWith('/v2/b/'))response=await v2Delivery(request,env,url,context); else if(url.pathname.startsWith('/b/'))response=await delivery(request,env,url,context); else if(url.pathname.startsWith('/api/'))response=await api(request,env,url); else response=await env.ASSETS.fetch(request); return secure(response); } catch(error) { return secure(fail(error.message||'Server error',error.status||500)); } } };

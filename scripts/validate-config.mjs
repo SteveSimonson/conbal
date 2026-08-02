@@ -23,8 +23,8 @@ if (wrangler) {
   if (wrangler.kv_namespaces?.length !== 1 || !wrangler.kv_namespaces[0]?.id || (!allowPlaceholderBindings && wrangler.kv_namespaces[0].id.includes('REPLACE_WITH'))) {
     failures.push('Set the KV namespace ID in wrangler.jsonc before deploying.');
   }
-  if (!wrangler.assets?.run_worker_first?.includes('/api/*') || !wrangler.assets?.run_worker_first?.includes('/b/*')) {
-    failures.push('Assets must route /api/* and /b/* through the worker.');
+  if (!wrangler.assets?.run_worker_first?.includes('/api/*') || !wrangler.assets?.run_worker_first?.includes('/b/*') || !wrangler.assets?.run_worker_first?.includes('/v2/b/*')) {
+    failures.push('Assets must route /api/*, /b/*, and /v2/b/* through the worker.');
   }
 }
 
@@ -40,6 +40,8 @@ for (const [expression, description] of [
   [/UNIQUE\s*\(\s*site_id\s*,\s*slug\s*\)/i, 'balloons must enforce unique slugs per site.'],
   [/CREATE TABLE balloon_delivery_counts\b/i, 'schema.sql must create balloon delivery counters.'],
   [/delivery_count INTEGER NOT NULL DEFAULT 0/i, 'balloon delivery counts must default to zero.'],
+  [/CREATE TABLE smart_delivery_items\b/i, 'schema.sql must create the smart-delivery index.'],
+  [/CREATE INDEX idx_smart_delivery_lookup ON smart_delivery_items\(site_key, topic, editorial_type, balloon_id\)/i, 'smart-delivery lookups must use the bounded topic index.'],
   [/CREATE INDEX idx_sites_user ON sites\(user_id\)/i, 'schema.sql must index sites.user_id.'],
   [/CREATE INDEX idx_balloons_site ON balloons\(site_id\)/i, 'schema.sql must index balloons.site_id.'],
 ]) requireMatch(schema, expression, description);
