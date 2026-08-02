@@ -98,6 +98,27 @@ async function publish(env, balloon) {
   if(copy.headline&&copy.body){const topics=String(balloon.topics||defaultContext).split(',').map(topic=>topic.trim()).filter(validMetadataToken);await env.DB.batch(topics.map(topic=>env.DB.prepare('INSERT INTO smart_delivery_items (balloon_id,site_key,slug,editorial_type,topic,headline,body) VALUES (?,?,?,?,?,?,?)').bind(balloon.id,balloon.site_key,balloon.slug,balloon.editorial_type||defaultEditorialType,topic,copy.headline,copy.body)));return true;}
   return false;
 }
+const reindexSnapshotFields = ['slug','title','html','css','size','editorial_type','topics'];
+function reindexGuard(balloon) {
+  const sql=`EXISTS (SELECT 1 FROM balloons WHERE id=? AND site_id=? AND status='published' AND ${reindexSnapshotFields.map(field=>`${field} IS ?`).join(' AND ')})`;
+  return {sql,args:[balloon.id,balloon.site_id,...reindexSnapshotFields.map(field=>balloon[field]??null)]};
+}
+async function reindexSnapshot(env,site,balloon) {
+  const copy=structuredCopy(balloon,'standard-v1'),topics=String(balloon.topics||defaultContext).split(',').map(topic=>topic.trim()).filter(validMetadataToken),guard=reindexGuard(balloon);
+  const statements=[env.DB.prepare(`DELETE FROM smart_delivery_items WHERE balloon_id=? AND ${guard.sql}`).bind(balloon.id,...guard.args)];
+  if(copy.headline&&copy.body)for(const topic of topics)statements.push(env.DB.prepare(`INSERT INTO smart_delivery_items (balloon_id,site_key,slug,editorial_type,topic,headline,body) SELECT ?,?,?,?,?,?,? WHERE ${guard.sql}`).bind(balloon.id,site.site_key,balloon.slug,balloon.editorial_type||defaultEditorialType,topic,copy.headline,copy.body,...guard.args));
+  const results=await env.DB.batch(statements),changed=results.reduce((total,result)=>total+Number(result?.meta?.changes??result?.changes??0),0);
+  return {applied:changed>0,indexed:Boolean(copy.headline&&copy.body&&topics.length)};
+}
+async function reindexPublishedBalloon(env,site,balloonId) {
+  for(let attempt=0;attempt<3;attempt++){
+    const balloon=await env.DB.prepare('SELECT * FROM balloons WHERE id=? AND site_id=?').bind(balloonId,site.id).first();
+    if(!balloon||balloon.status!=='published')return false;
+    const result=await reindexSnapshot(env,site,balloon);
+    if(result.applied)return result.indexed;
+  }
+  return false;
+}
 async function createSession(env, user) { const value=token(16); await env.CONBAL_KV.put(`s:${value}`,JSON.stringify({id:user.id,email:user.email}),{expirationTtl:604800}); return value; }
 async function googleAuth(request, env, url) {
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return fail('Google login is not configured yet', 503);
@@ -387,7 +408,7 @@ async function api(request, env, url) {
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/metadata\/import$/);
   if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const metadata=csvMetadataRows(await csvBody(request)); const balloons=(await env.DB.prepare('SELECT * FROM balloons WHERE site_id=?').bind(site.id).all()).results, bySlug=new Map(balloons.map(balloon=>[balloon.slug,balloon])); for(const item of metadata)if(!bySlug.has(item.slug))return fail(`Row ${item.sourceRow}: balloon slug "${item.slug}" does not exist for this site`,409); const updates=metadata.map(({sourceRow,...item})=>({...item,balloon:bySlug.get(item.slug)})); try{await env.DB.batch(updates.map(update=>env.DB.prepare("UPDATE balloons SET editorial_type=?,topics=?,updated_at=datetime('now') WHERE id=?").bind(update.editorial_type,update.topics,update.balloon.id)));await Promise.all(updates.filter(update=>update.balloon.status==='published').map(update=>publish(env,{...update.balloon,...update,site_key:site.site_key})));}catch(error){console.error('balloon metadata import failed',error);return fail('Unable to update balloon metadata',500);} return json({updated:updates.length}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/reindex$/);
-  if (match) { if(method!=='POST')return fail('Method not allowed',405);const site=await ownerSite(env,user,match[1]),balloons=(await env.DB.prepare("SELECT * FROM balloons WHERE site_id=? AND status='published' ORDER BY id").bind(site.id).all()).results;let indexed=0;for(const balloon of balloons)if(await publish(env,{...balloon,site_key:site.site_key}))indexed++;return json({indexed,skipped:balloons.length-indexed,total:balloons.length}); }
+  if (match) { if(method!=='POST')return fail('Method not allowed',405);const site=await ownerSite(env,user,match[1]),balloons=(await env.DB.prepare("SELECT id FROM balloons WHERE site_id=? AND status='published' ORDER BY id").bind(site.id).all()).results;let indexed=0;for(const balloon of balloons)if(await reindexPublishedBalloon(env,site,balloon.id))indexed++;return json({indexed,skipped:balloons.length-indexed,total:balloons.length}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/publish-all$/);
   if (match) { if(method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); const drafts=(await env.DB.prepare("SELECT * FROM balloons WHERE site_id=? AND status='draft'").bind(site.id).all()).results; if(drafts.length>maxImportRows)return fail(`Publish at most ${maxImportRows} draft balloons at a time`,413); const written=[]; try{await Promise.all(drafts.map(async balloon=>{await publish(env,{...balloon,site_key:site.site_key});written.push(balloon.slug);}));if(drafts.length)await env.DB.batch(drafts.map(balloon=>env.DB.prepare("UPDATE balloons SET status='published',updated_at=datetime('now') WHERE id=?").bind(balloon.id)));}catch(error){await Promise.allSettled(written.map(slug=>env.CONBAL_KV.delete(`b:${site.site_key}:${slug}`)));console.error('balloon bulk publish failed',error);return fail('Unable to publish balloons',500);} return json({published:drafts.length}); }
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/import$/);
