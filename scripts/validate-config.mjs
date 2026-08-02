@@ -47,6 +47,7 @@ for (const [expression, description] of [
   [/CREATE INDEX idx_balloons_site ON balloons\(site_id\)/i, 'schema.sql must index balloons.site_id.'],
   [/CREATE TABLE generation_jobs\b/i, 'schema.sql must create page-aware generation jobs.'],
   [/CREATE TABLE generation_items\b/i, 'schema.sql must create page-aware generation provenance.'],
+  [/CREATE UNIQUE INDEX idx_generation_active_site ON generation_jobs\(site_id\)/i, 'schema.sql must prevent concurrent generation jobs per site.'],
 ]) requireMatch(schema, expression, description);
 
 let examples;

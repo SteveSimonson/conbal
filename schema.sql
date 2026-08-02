@@ -49,6 +49,7 @@ CREATE TABLE generation_jobs (
 );
 
 CREATE INDEX idx_generation_jobs_owner ON generation_jobs(user_id, created_at DESC);
+CREATE UNIQUE INDEX idx_generation_active_site ON generation_jobs(site_id) WHERE status IN ('queued', 'running');
 
 CREATE TABLE generation_items (
   job_id TEXT NOT NULL REFERENCES generation_jobs(id) ON DELETE CASCADE,

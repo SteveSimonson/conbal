@@ -17,6 +17,7 @@ function environment({ key = null, origin_url = null, jobs = new Map(), balloons
       statement.bind = (...args) => { statement.args = args; return statement; };
       statement.first = async () => {
         if (sql.startsWith('SELECT * FROM sites WHERE id=?')) return statement.args[0] === currentSite.id ? currentSite : null;
+        if (sql.startsWith('SELECT SUM(CASE WHEN status')) return { active: 0, recent: 0 };
         if (sql.startsWith('SELECT * FROM sites')) return statement.args[0] === currentSite.id && statement.args[1] === user.id ? currentSite : null;
         if (sql.startsWith('SELECT * FROM generation_jobs WHERE id=? AND user_id=?')) return jobs.get(statement.args[0])?.user_id === statement.args[1] ? jobs.get(statement.args[0]) : null;
         if (sql.startsWith('SELECT * FROM generation_jobs WHERE id=?')) return jobs.get(statement.args[0]) || null;

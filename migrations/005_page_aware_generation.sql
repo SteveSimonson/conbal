@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS generation_jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_generation_jobs_owner ON generation_jobs(user_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_generation_active_site ON generation_jobs(site_id) WHERE status IN ('queued', 'running');
 
 CREATE TABLE IF NOT EXISTS generation_items (
   job_id TEXT NOT NULL REFERENCES generation_jobs(id) ON DELETE CASCADE,

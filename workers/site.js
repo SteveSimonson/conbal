@@ -19,6 +19,7 @@ const generationMaxPageBytes = 262144;
 const generationMaxPageWords = 12000;
 const generationMaxSourceUrls = 16;
 const generationTimeoutMs = 6500;
+const generationMaxRecentJobs = 20;
 const generationRoles = ['inline-note', 'section-break', 'aside-note', 'grid-tile'];
 const generationLabels = {
   did_you_know: 'Did you know?',
@@ -36,6 +37,14 @@ const id = () => crypto.randomUUID();
 const token = (bytes = 18) => { const a = new Uint8Array(bytes); crypto.getRandomValues(a); return btoa(String.fromCharCode(...a)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''); };
 
 function generationFailure(message, status = 400) { throw Object.assign(new Error(message), { status }); }
+function sameOriginRequest(request, url) {
+  for (const header of ['origin', 'referer']) {
+    const value = request.headers.get(header);
+    if (!value) continue;
+    try { if (new URL(value).origin !== url.origin) return false; } catch { return false; }
+  }
+  return true;
+}
 function htmlEscape(value) { return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character])); }
 function canonicalOrigin(url) { return `${url.protocol}//${url.host}`; }
 function privateHostname(hostname) {
@@ -675,7 +684,7 @@ async function api(request, env, url, context) {
   match = path.match(/^\/api\/sites\/([^/]+)\/page-profile$/);
   if (match) { if (method !== 'POST') return fail('Method not allowed',405); const site=await ownerSite(env,user,match[1]); try { const { page_url } = await body(request); const profile=await buildPageProfile(page_url,site); if (!site.origin_url) { await env.DB.prepare('UPDATE sites SET origin_url=? WHERE id=? AND user_id=? AND origin_url IS NULL').bind(profile.origin,site.id,user.id).run(); } return json({profile:publicPageProfile(profile)}); } catch (error) { return fail(error.message || 'Unable to analyze page',error.status || 500); } }
   match = path.match(/^\/api\/sites\/([^/]+)\/generation-jobs$/);
-  if (match && method === 'POST') { const site=await ownerSite(env,user,match[1]); if (!env.OPENAI_API_KEY) return fail('Page-aware generation is not configured. Add the OPENAI_API_KEY Worker secret.',503); let profile; try { const { page_url } = await body(request); profile=await buildPageProfile(page_url,site); } catch (error) { return fail(error.message || 'Unable to analyze page',error.status || 500); } if (!profile.slots.length) return fail('This page does not have enough readable content for a useful draft yet',422); if (!site.origin_url) await env.DB.prepare('UPDATE sites SET origin_url=? WHERE id=? AND user_id=? AND origin_url IS NULL').bind(profile.origin,site.id,user.id).run(); const job={id:id(),user_id:user.id,site_id:site.id,status:'queued',page_url:profile.url,page_kind:profile.kind,page_title:profile.title,page_fingerprint:profile.fingerprint,requested_count:profile.slots.length,completed_count:0,profile_json:JSON.stringify(profile),provider:'openai',model:env.OPENAI_MODEL || 'gpt-4o-mini'}; await env.DB.prepare('INSERT INTO generation_jobs (id,user_id,site_id,status,page_url,page_kind,page_title,page_fingerprint,requested_count,completed_count,profile_json,provider,model) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(job.id,job.user_id,job.site_id,job.status,job.page_url,job.page_kind,job.page_title,job.page_fingerprint,job.requested_count,job.completed_count,job.profile_json,job.provider,job.model).run(); const work=runGenerationJob(env,job.id); if (context?.waitUntil) context.waitUntil(work); else await work; return json({job_id:job.id,status:'queued',profile:publicPageProfile(profile)},{status:202}); }
+  if (match && method === 'POST') { const site=await ownerSite(env,user,match[1]); if (!sameOriginRequest(request,url)) return fail('Generation requests must come from the Conbal dashboard',403); if (!env.OPENAI_API_KEY) return fail('Page-aware generation is not configured. Add the OPENAI_API_KEY Worker secret.',503); const usage=await env.DB.prepare("SELECT SUM(CASE WHEN status IN ('queued','running') THEN 1 ELSE 0 END) AS active,SUM(CASE WHEN created_at >= datetime('now','-1 hour') THEN 1 ELSE 0 END) AS recent FROM generation_jobs WHERE site_id=?").bind(site.id).first(); if (Number(usage?.active) > 0) return fail('A generation job is already running for this site',409); if (Number(usage?.recent) >= generationMaxRecentJobs) return fail('This site has reached its hourly draft-generation limit',429); let profile; try { const { page_url } = await body(request); profile=await buildPageProfile(page_url,site); } catch (error) { return fail(error.message || 'Unable to analyze page',error.status || 400); } if (!profile.slots.length) return fail('This page does not have enough readable content for a useful draft yet',422); if (!site.origin_url) await env.DB.prepare('UPDATE sites SET origin_url=? WHERE id=? AND user_id=? AND origin_url IS NULL').bind(profile.origin,site.id,user.id).run(); const job={id:id(),user_id:user.id,site_id:site.id,status:'queued',page_url:profile.url,page_kind:profile.kind,page_title:profile.title,page_fingerprint:profile.fingerprint,requested_count:profile.slots.length,completed_count:0,profile_json:JSON.stringify(profile),provider:'openai',model:env.OPENAI_MODEL || 'gpt-4o-mini'}; try { await env.DB.prepare('INSERT INTO generation_jobs (id,user_id,site_id,status,page_url,page_kind,page_title,page_fingerprint,requested_count,completed_count,profile_json,provider,model) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(job.id,job.user_id,job.site_id,job.status,job.page_url,job.page_kind,job.page_title,job.page_fingerprint,job.requested_count,job.completed_count,job.profile_json,job.provider,job.model).run(); } catch (error) { if (/idx_generation_active_site|UNIQUE constraint failed: generation_jobs.site_id/i.test(String(error?.message || error))) return fail('A generation job is already running for this site',409); throw error; } const work=runGenerationJob(env,job.id); if (context?.waitUntil) context.waitUntil(work); else await work; return json({job_id:job.id,status:'queued',profile:publicPageProfile(profile)},{status:202}); }
   match = path.match(/^\/api\/generation-jobs\/([^/]+)$/);
   if (match && method === 'GET') return json(await generationJobView(env,user,match[1]));
   match = path.match(/^\/api\/sites\/([^/]+)\/balloons\/metadata\/import$/);
