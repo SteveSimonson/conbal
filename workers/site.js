@@ -150,7 +150,12 @@ function pageSourceUrls(pageUrl, html) {
     if (urls.length >= generationMaxSourceUrls) break;
     try {
       const candidate = new URL(href, pageUrl);
-      if (['http:', 'https:'].includes(candidate.protocol) && hostnameMatches(candidate, pageUrl)) { candidate.hash = ''; const value = candidate.toString(); if (!urls.includes(value)) urls.push(value); }
+      if (['http:', 'https:'].includes(candidate.protocol) && hostnameMatches(candidate, pageUrl)) {
+        candidate.hash = '';
+        for (const key of [...candidate.searchParams.keys()]) if (/token|secret|password|passwd|api[_-]?key|auth|signature|code/i.test(key)) candidate.searchParams.delete(key);
+        const value = candidate.toString();
+        if (!urls.includes(value)) urls.push(value);
+      }
     } catch { /* ignore malformed links */ }
   }
   return urls;
