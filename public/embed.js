@@ -104,6 +104,12 @@
     return document.querySelector('main, [role="main"], article') || document.body;
   }
 
+  function contentSignature() {
+    const root = pageRoot();
+    const heading = document.querySelector('h1');
+    return `${textOf(heading).slice(0, 160)}|${textOf(root).slice(0, 640)}`;
+  }
+
   function pageKind(root) {
     const path = location.pathname.toLowerCase();
     if (/checkout|cart|account|admin|login/.test(path)) return 'blocked';
@@ -292,11 +298,15 @@
     autoController = undefined;
   }
 
-  function scheduleAuto(origin, site, generation, attempt = 0) {
+  function scheduleAuto(origin, site, generation, attempt = 0, previousContent) {
     const maxAttempts = 8;
     const delay = attempt === 0 ? 40 : Math.min(500, 40 * (attempt + 1));
     setTimeout(async () => {
       if (generation !== autoSchedule || document.querySelector('[data-conbal-auto-slot]')) return;
+      if (previousContent !== undefined && contentSignature() === previousContent) {
+        if (attempt < maxAttempts) scheduleAuto(origin, site, generation, attempt + 1, previousContent);
+        return;
+      }
       const status = await runAuto(origin, site);
       if (status === 'empty' && attempt < maxAttempts && generation === autoSchedule) {
         scheduleAuto(origin, site, generation, attempt + 1);
@@ -311,7 +321,7 @@
       last = location.href;
       cancelAuto();
       document.querySelectorAll('[data-conbal-auto-slot]').forEach(slot => slot.remove());
-      scheduleAuto(origin, site, autoSchedule);
+      scheduleAuto(origin, site, autoSchedule, 0, contentSignature());
     };
     ['pushState', 'replaceState'].forEach(method => {
       const original = history[method];
