@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/marketing.css">
 </head>
 <body class="auth-body">
-  <a class="skip-link" href="#auth-card">Skip to sign in</a>
+  <a class="skip-link" href="#auth-card">Skip to Google sign in</a>
   <div class="auth-shell">
     <aside class="auth-story">
       <a class="brand" href="/" aria-label="Conbal home"><span class="brand-mark" aria-hidden="true"></span>Conbal</a>
@@ -18,24 +18,22 @@
       <section class="auth-card" id="auth-card" aria-labelledby="auth-heading">
         <a class="brand mobile-brand" href="/" aria-label="Conbal home"><span class="brand-mark" aria-hidden="true"></span>Conbal</a>
         <h1 id="auth-heading">Welcome to Conbal.</h1>
-        <p class="intro">Sign in to manage the content across your sites.</p>
+        <p class="intro">Use your Google account to manage content across all of your sites.</p>
         <p id="message" role="alert" aria-live="assertive"></p>
-        <button class="button google-button" id="google-login" type="button"><span class="google-g" aria-hidden="true">G</span>Continue with Google</button>
-        <p class="or">or sign in with email</p>
-        <form id="auth">
-          <label>Email <input name="email" type="email" autocomplete="email" required></label>
-          <label>Password <input name="password" type="password" autocomplete="current-password" minlength="8" required></label>
+        <form id="google-auth">
           <label>Invite code <input name="inviteCode" autocomplete="off" aria-describedby="invite-help"></label>
-          <small id="invite-help">Only needed when creating an account while Conbal is invite-only.</small>
-          <div class="auth-actions"><button class="button" name="action" value="login">Log in</button><button class="button button-secondary" name="action" value="signup">New to Conbal? Create an account</button></div>
+          <small id="invite-help">Only needed when your Conbal workspace is invite-only.</small>
+          <button class="button google-button" id="google-login" type="submit"><span class="google-g" aria-hidden="true">G</span>Continue with Google</button>
         </form>
+        <p class="auth-note">Existing Conbal accounts can connect their Google account using the same email address.</p>
         <a class="back-home" href="/">← Explore Conbal first</a>
       </section>
     </main>
   </div>
   <script>
-    const form=document.querySelector('#auth'), message=document.querySelector('#message'), googleLogin=document.querySelector('#google-login');
-    googleLogin.onclick=async()=>{
+    const form=document.querySelector('#google-auth'), message=document.querySelector('#message'), googleLogin=document.querySelector('#google-login');
+    form.onsubmit=async event=>{
+      event.preventDefault();
       message.textContent=''; googleLogin.disabled=true; googleLogin.textContent='Please wait…';
       try{
         const response=await fetch('/api/auth/google',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({inviteCode:new FormData(form).get('inviteCode')})});
@@ -44,20 +42,6 @@
         else message.textContent=data.error||'Unable to start Google sign-in. Please try again.';
       }catch{message.textContent='Unable to reach Conbal. Check your connection and try again.'}
       finally{googleLogin.disabled=false;googleLogin.textContent='Continue with Google'}
-    };
-    form.onsubmit=async event=>{
-      event.preventDefault();
-      const submitter=event.submitter;
-      if(!submitter)return;
-      const original=submitter.textContent;
-      message.textContent=''; submitter.disabled=true; submitter.textContent='Please wait…';
-      try{
-        const response=await fetch('/api/'+submitter.value,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(form)))});
-        const data=await response.json().catch(()=>({}));
-        if(response.ok)location.assign('/admin/');
-        else message.textContent=data.error||'Something went wrong. Please try again.';
-      }catch{message.textContent='Unable to reach Conbal. Check your connection and try again.'}
-      finally{submitter.disabled=false;submitter.textContent=original}
     };
   </script>
 </body>

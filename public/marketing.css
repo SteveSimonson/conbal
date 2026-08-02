@@ -87,6 +87,7 @@ a:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid var(-
 .auth-card .button{width:100%;border-radius:11px}.google-button{min-height:50px;background:#fff;color:var(--ink);border-color:#cfcac1;box-shadow:none}.google-button:hover{background:#f7f7fb;color:var(--ink)}.google-g{display:grid;place-items:center;width:23px;height:23px;border-radius:50%;background:conic-gradient(from -45deg,#4285f4 0 25%,#34a853 0 45%,#fbbc05 0 70%,#ea4335 0);color:#fff;font-size:.72rem;font-weight:900}
 .or{display:flex;align-items:center;gap:12px;margin:22px 0;color:var(--muted);font-size:.8rem}.or:before,.or:after{content:"";height:1px;flex:1;background:var(--line)}
 .auth-actions{display:grid;gap:10px;margin-top:20px}.auth-actions .button-secondary{color:var(--ink)}
+.auth-note{margin:18px 0 0;color:var(--muted);font-size:.82rem;line-height:1.5}
 #message{min-height:1.5em;margin:0 0 10px;color:#b42318;font-weight:700}
 .back-home{display:inline-block;margin-top:22px;color:var(--muted);font-size:.85rem;text-decoration:none}.back-home:hover{text-decoration:underline}
 

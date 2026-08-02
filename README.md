@@ -40,14 +40,14 @@ Conbal delivers owner-authored HTML/CSS content balloons to any site. Cloudflare
    `POST /api/sites/<site-id>/balloons/reindex` once. Require `skipped: 0` and
    confirm `indexed` equals the published-balloon count. This backfill is
    mandatory; an empty result means v2 correctly has no indexed inventory.
-7. Verify `/api/health`, signup, login, site creation, balloon publishing, v1
+7. Verify `/api/health`, Google login, site creation, balloon publishing, v1
    delivery from `/b/<site-key>/<slug>`, and a structured v2 request to
    `/v2/b/<site-key>/sample`. The v2 response must be `200`, CORS-readable, and
    contain plain-text assignments for known eligible inventory.
 
 ## Google login
 
-Create an External web OAuth client in Google Auth Platform. Use `https://conbal.us` as the authorized JavaScript origin and `https://conbal.us/api/auth/google/callback` as the authorized redirect URI. Publish the OAuth app when it is ready for users.
+Create an External web OAuth client in Google Auth Platform. Use `https://conbal.us` as the authorized JavaScript origin and `https://conbal.us/api/auth/google/callback` as the authorized redirect URI. Publish the OAuth app when it is ready for users. Conbal uses Google as its only sign-in method; the previous email/password endpoints return `410 Gone`.
 
 Store the credentials as encrypted Worker secrets; never put their values in Wrangler config, `.dev.vars.example`, or Git:
 
@@ -56,7 +56,7 @@ npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
 ```
 
-The login page sends an invite code to Conbal over `POST`, not in a URL. When `SIGNUP_INVITE_CODE` is configured, existing Google-linked accounts can still sign in, while new Google users must supply the valid code.
+The login page sends an invite code to Conbal over `POST`, not in a URL. When `SIGNUP_INVITE_CODE` is configured, existing Google-linked accounts can still sign in, while new Google users must supply the valid code. Existing password-era accounts are linked automatically when the verified Google email matches; their sites and content remain attached to the same account.
 
 ## CSV imports and multiple sites
 
