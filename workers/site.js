@@ -299,9 +299,9 @@ function structuredCopy(candidate, budgetName) {
   return {headline:limit(headline,budget.headline),body:limit(bodyText,budget.body)};
 }
 async function structuredInventory(env,siteKey,slots) {
-  const literal=value=>`'${String(value).replaceAll("'","''")}'`, excluded=slots[0]?.excludedSlugs||new Set(), fetchLimit=maxStructuredCandidatesPerSlot+excluded.size, branches=[];
-  for(const slot of slots){const types=slot.editorial_types.map(literal).join(',');for(const topic of new Set([...slot.topics.filter(value=>value!==defaultContext),defaultContext]))branches.push(`SELECT * FROM (SELECT i.balloon_id AS id,i.slug,i.headline,i.body,i.editorial_type,i.topic AS topics FROM smart_delivery_items i JOIN balloons b ON b.id=i.balloon_id AND b.status='published' WHERE i.site_key=${literal(siteKey)} AND i.topic=${literal(topic)} AND i.editorial_type IN (${types}) ORDER BY i.balloon_id LIMIT ${fetchLimit})`);}
-  const rows=(await env.DB.prepare(branches.join(' UNION ALL ')).all()).results, merged=new Map();
+  const excluded=slots[0]?.excludedSlugs||new Set(), fetchLimit=maxStructuredCandidatesPerSlot+excluded.size, statements=[];
+  for(const slot of slots){const placeholders=slot.editorial_types.map(()=>'?').join(',');for(const topic of new Set([...slot.topics.filter(value=>value!==defaultContext),defaultContext]))statements.push(env.DB.prepare(`SELECT i.balloon_id AS id,i.slug,i.headline,i.body,i.editorial_type,i.topic AS topics FROM smart_delivery_items i JOIN balloons b ON b.id=i.balloon_id AND b.status='published' WHERE i.site_key=? AND i.topic=? AND i.editorial_type IN (${placeholders}) ORDER BY i.balloon_id LIMIT ${fetchLimit}`).bind(siteKey,topic,...slot.editorial_types));}
+  const rows=(await env.DB.batch(statements)).flatMap(result=>result.results||[]), merged=new Map();
   for(const row of rows){if(excluded.has(row.slug))continue;const current=merged.get(row.id);if(current){current.topics=`${current.topics},${row.topics}`;}else merged.set(row.id,{...row});}
   return [...merged.values()];
 }
