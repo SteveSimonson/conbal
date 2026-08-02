@@ -165,6 +165,7 @@ function autoDocument() {
   });
   main.append(heading, ...sections);
   const all = [main, heading, ...sections, ...sections.flatMap(section => section.children)];
+  const descendants = node => node.children.flatMap(child => [child, ...descendants(child)]);
   const script = {
     src: 'https://conbal.us/embed.js',
     dataset: { conbalSite: 'ABCDEFGHIJKL', conbalAuto: 'true' },
@@ -185,14 +186,14 @@ function autoDocument() {
     querySelectorAll(selector) {
       if (selector === 'section, article') return sections;
       if (selector === 'h2, h3') return sections.flatMap(section => section.children);
-      if (selector === '[data-conbal-auto-slot]') return all.filter(node => node.dataset?.conbalAutoSlot !== undefined && !node.removed);
+      if (selector === '[data-conbal-auto-slot]') return descendants(main).filter(node => node.dataset?.conbalAutoSlot !== undefined && !node.removed);
       if (selector === '[data-conbal][data-conbal-site]') return [];
       return [];
     },
     createElement: tagName => new FakeElement(tagName),
     getElementById: () => null,
   };
-  return { document, main, all };
+  return { document, main, heading, all };
 }
 
 test('one automatic script analyzes the page and renders a fresh structured deck', async () => {
@@ -268,4 +269,56 @@ test('managed hosts keep explicit slots when the automatic flag is present', asy
 
   assert.equal(target.style.display, 'block');
   assert.match(target.innerHTML, /Managed fact/);
+});
+
+test('SPA navigation waits for replacement content before sampling again', async () => {
+  const { document, main, heading } = autoDocument();
+  const timers = [];
+  const requests = [];
+  const location = { href: 'https://host.example/guide', pathname: '/guide' };
+  const history = { pushState() {}, replaceState() {} };
+  const assignments = { assignments: {
+    'auto-1': { role: 'inline-note', budget: 'standard-v1', editorial_type: 'did_you_know', slug: 'fresh-one', content: { headline: 'A useful fact', body: 'A useful body.' } },
+    'auto-2': { role: 'section-break', budget: 'compact-v1', editorial_type: 'care_tip', slug: 'fresh-two', content: { headline: 'A care note', body: 'A care body.' } },
+    'auto-3': { role: 'aside-note', budget: 'compact-v1', editorial_type: 'fun_fact', slug: 'fresh-three', content: { headline: 'A fun fact', body: 'A fun body.' } },
+  } };
+  const context = {
+    document,
+    fetch: async (url, init) => {
+      requests.push({ url, body: JSON.parse(init.body) });
+      return { ok: true, json: async () => assignments };
+    },
+    URL,
+    location,
+    localStorage: { getItem: () => '[]', setItem: () => {} },
+    history,
+    window: { addEventListener() {} },
+    setTimeout: callback => { timers.push(callback); return timers.length; },
+    clearTimeout: () => {},
+    AbortController,
+    crypto: { randomUUID: () => 'page-view-123' },
+  };
+  vm.runInNewContext(source, context);
+  const drain = async () => {
+    const callback = timers.shift();
+    assert.ok(callback, 'expected a scheduled automatic run');
+    callback();
+    await flush();
+  };
+
+  await drain();
+  assert.equal(requests.length, 1);
+
+  location.href = 'https://host.example/guide/next';
+  location.pathname = '/guide/next';
+  history.pushState();
+  await drain();
+  assert.equal(requests.length, 1, 'old DOM must not trigger a second request');
+
+  heading.innerText = 'A different guide';
+  heading.textContent = 'A different guide';
+  main.innerText = 'New page content '.repeat(90);
+  main.textContent = main.innerText;
+  await drain();
+  assert.equal(requests.length, 2);
 });

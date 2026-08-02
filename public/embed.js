@@ -107,7 +107,12 @@
   function contentSignature() {
     const root = pageRoot();
     const heading = document.querySelector('h1');
-    return `${textOf(heading).slice(0, 160)}|${textOf(root).slice(0, 640)}`;
+    const semantic = [...root.querySelectorAll('h2, h3, p, li')]
+      .filter(node => !node.closest?.('[data-conbal-auto-slot]'))
+      .map(textOf)
+      .filter(Boolean)
+      .join(' ');
+    return `${textOf(heading).slice(0, 160)}|${(semantic || textOf(root)).slice(0, 640)}`;
   }
 
   function pageKind(root) {
@@ -298,16 +303,19 @@
     autoController = undefined;
   }
 
-  function scheduleAuto(origin, site, generation, attempt = 0, previousContent) {
+  function scheduleAuto(origin, site, generation, attempt = 0, previousContent, onContentChanged) {
     const maxAttempts = 8;
     const delay = attempt === 0 ? 40 : Math.min(500, 40 * (attempt + 1));
     setTimeout(async () => {
       if (generation !== autoSchedule || document.querySelector('[data-conbal-auto-slot]')) return;
-      if (previousContent !== undefined && contentSignature() === previousContent) {
-        if (attempt < maxAttempts) scheduleAuto(origin, site, generation, attempt + 1, previousContent);
+      const currentContent = contentSignature();
+      if (previousContent !== undefined && currentContent === previousContent && attempt < maxAttempts) {
+        scheduleAuto(origin, site, generation, attempt + 1, previousContent, onContentChanged);
         return;
       }
+      if (previousContent !== undefined) onContentChanged?.(currentContent);
       const status = await runAuto(origin, site);
+      if (status === 'started' || status === 'empty') onContentChanged?.(contentSignature());
       if (status === 'empty' && attempt < maxAttempts && generation === autoSchedule) {
         scheduleAuto(origin, site, generation, attempt + 1);
       }
@@ -316,12 +324,13 @@
 
   function watchAuto(origin, site) {
     let last = location.href;
+    let lastContent = contentSignature();
     const rerun = () => {
       if (location.href === last) return;
       last = location.href;
       cancelAuto();
       document.querySelectorAll('[data-conbal-auto-slot]').forEach(slot => slot.remove());
-      scheduleAuto(origin, site, autoSchedule, 0, contentSignature());
+      scheduleAuto(origin, site, autoSchedule, 0, lastContent, signature => { lastContent = signature; });
     };
     ['pushState', 'replaceState'].forEach(method => {
       const original = history[method];
@@ -331,7 +340,7 @@
       history[method] = wrapped;
     });
     window.addEventListener('popstate', rerun);
-    scheduleAuto(origin, site, autoSchedule);
+    scheduleAuto(origin, site, autoSchedule, 0, undefined, signature => { lastContent = signature; });
   }
 
   function start() {
