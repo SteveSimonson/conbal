@@ -2,3 +2,7 @@
 # SIGNUP_INVITE_CODE=replace-me
 GOOGLE_CLIENT_ID=your-google-oauth-client-id
 GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+# Optional for page-aware draft generation. Keep this server-side only.
+OPENAI_API_KEY=your-openai-api-key
+# Optional; defaults to the low-cost structured-output model used by Conbal.
+# OPENAI_MODEL=gpt-4o-mini
