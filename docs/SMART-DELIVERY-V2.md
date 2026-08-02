@@ -110,23 +110,31 @@ allowed by the slot are candidates. Selection proceeds as follows:
 5. Within the same relevance tier, use a stable rank derived from
    `page_view_id`, slot ID, and candidate slug.
 
-The published candidate query ranks relevance inside D1 and admits up to 16
-eligible candidates per requested slot, so unrelated earlier rows cannot hide a
-relevant fact. Excluded slugs are removed before that cap. The whole request is
-capped at 32 KiB and the stream is cancelled as soon as it crosses that bound.
-Retrying an equivalent request with the same page-view ID produces the same
-unique assignments even if D1 returns rows in a different order. Inventory or
-request changes can, appropriately, change the deck.
+Publishing precomputes safe structured copy and writes one indexed lookup row
+per balloon topic. Delivery therefore never scans or reparses the site's raw
+HTML. Each requested topic performs a bounded indexed lookup of at most 16
+candidates (plus enough headroom for the request's explicit exclusions), and
+the deck optimizer works only on those small plain-text rows. The whole request
+is capped at 32 KiB and the stream is cancelled as soon as it crosses that
+bound. Retrying an equivalent request with the same page-view ID produces the
+same unique assignments even if D1 returns rows in a different order.
+Inventory or request changes can, appropriately, change the deck.
+
+Existing published inventory can be indexed after migration with the
+authenticated owner operation `POST /api/sites/{siteId}/balloons/reindex`.
+Normal publish, edit, metadata-import, unpublish, and delete operations maintain
+the index automatically after that one-time backfill.
 
 ## Source-to-text conversion
 
-v2 reads the current stored HTML from the published D1 balloon row. It removes
-markup, comments, and non-content blocks such as `script`, `style`, `template`,
-`noscript`, and `svg` without evaluating them. The first visible heading or
-strong headline is used; when neither exists, the balloon's D1 title is the
-fallback. Template labels, serial numbers, and marks are excluded while the
-longest body-copy fragment becomes the body. The legacy published KV
-HTML/CSS payload continues to serve v1 and is never exposed by v2.
+When a balloon is published or reindexed, Conbal removes markup, comments, and
+non-content blocks such as `script`, `style`, `template`, `noscript`, and `svg`
+without evaluating them. The first visible heading or strong headline is used;
+when neither exists, the balloon's D1 title is the fallback. Template labels,
+serial numbers, and marks are excluded while the longest body-copy fragment
+becomes the body. Only the resulting bounded plain text enters the indexed v2
+table. The legacy published KV HTML/CSS payload continues to serve v1 and is
+never exposed by v2.
 
 ## Errors
 

@@ -45,10 +45,9 @@ function fakeEnvironment(inventory = [], { reverseEveryQuery = false } = {}) {
         args: [],
         bind(...args) { this.args = args; return this; },
         async all() {
-          if (!sql.includes("b.status='published'")) throw new Error(`Unexpected query: ${sql}`);
+          if (!sql.includes('smart_delivery_items')) throw new Error(`Unexpected query: ${sql}`);
           queries.push(sql);
-          const [, ...types] = this.args;
-          let rows = inventory.filter(item => (item.status ?? 'published') === 'published' && types.includes(item.editorial_type));
+          let rows = inventory.filter(item => (item.status ?? 'published') === 'published');
           if (reverseEveryQuery && queryCount++ % 2) rows = [...rows].reverse();
           return { results: rows };
         },
@@ -109,8 +108,9 @@ test('v2 returns the structured 2.0 contract with bounded plain text only', asyn
   assert.doesNotMatch(JSON.stringify(body), /<[^>]*>|html|css|color|background|alert|Stale KV/);
   assert.deepEqual(counted, [['safe']]);
   assert.equal(queries.length, 1);
-  assert.match(queries[0], /ROW_NUMBER/);
-  assert.match(queries[0], /candidate_rank<=16/);
+  assert.match(queries[0], /smart_delivery_items/);
+  assert.match(queries[0], /LIMIT 16/);
+  assert.doesNotMatch(queries[0], /instr\(|ROW_NUMBER/);
 });
 
 test('v2 assignments are stable across retries and database row order', async () => {
@@ -261,6 +261,24 @@ test('v2 nested unsafe blocks never leak hidden descendants', async () => {
 
   assert.deepEqual(copy, { headline: 'Safe fallback headline', body: 'Visible body copy remains available to the host.' });
   assert.doesNotMatch(JSON.stringify(copy), /PRIVATE|vector/);
+});
+
+test('v2 raw-text script and style blocks stop at their first real closing tag', async () => {
+  const source = {
+    id: 'raw-text',
+    slug: 'raw-text',
+    title: 'Fallback',
+    html: '<script>const sample = "<script>";</script><style>.demo::after{content:"<style>"}</style><h2>Visible headline</h2><p>Visible body remains after raw-text blocks.</p>',
+    editorial_type: 'did_you_know',
+    topics: 'home',
+  };
+  const { env } = fakeEnvironment([source]);
+  const response = await worker.fetch(v2Request(), env, {});
+
+  assert.deepEqual((await response.json()).assignments.primary.content, {
+    headline: 'Visible headline',
+    body: 'Visible body remains after raw-text blocks.',
+  });
 });
 
 test('v2 returns an empty deck when published inventory cannot fill a request', async () => {

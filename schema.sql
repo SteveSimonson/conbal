@@ -18,6 +18,13 @@ CREATE TABLE balloon_delivery_counts (
   delivery_count INTEGER NOT NULL DEFAULT 0 CHECK (delivery_count >= 0),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+CREATE TABLE smart_delivery_items (
+  balloon_id TEXT NOT NULL REFERENCES balloons(id) ON DELETE CASCADE,
+  site_key TEXT NOT NULL, slug TEXT NOT NULL, editorial_type TEXT NOT NULL,
+  topic TEXT NOT NULL, headline TEXT NOT NULL, body TEXT NOT NULL,
+  PRIMARY KEY (balloon_id, topic)
+);
 CREATE INDEX idx_sites_user ON sites(user_id);
 CREATE INDEX idx_balloons_site ON balloons(site_id);
 CREATE INDEX idx_balloons_site_status_size ON balloons(site_id, status, size);
+CREATE INDEX idx_smart_delivery_lookup ON smart_delivery_items(site_key, topic, editorial_type, balloon_id);
