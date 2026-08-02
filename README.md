@@ -33,6 +33,12 @@ Conbal delivers owner-authored HTML/CSS content balloons to any site. Cloudflare
    npx wrangler d1 execute conbal-db --remote --file=migrations/004_smart_delivery_index.sql
    ```
 
+   Apply the page-aware generation migration before enabling draft generation:
+
+   ```sh
+   npx wrangler d1 execute conbal-db --remote --file=migrations/005_page_aware_generation.sql
+   ```
+
 4. Optionally create `.dev.vars` from `.dev.vars.example` and set `SIGNUP_INVITE_CODE` to restrict account creation.
 5. Run `npm run validate`; it intentionally fails while the binding IDs are placeholders.
 6. Deploy with `npm run deploy`. For every site that already has published
@@ -57,6 +63,22 @@ npx wrangler secret put GOOGLE_CLIENT_SECRET
 ```
 
 The login page sends an invite code to Conbal over `POST`, not in a URL. When `SIGNUP_INVITE_CODE` is configured, existing Google-linked accounts can still sign in, while new Google users must supply the valid code. Existing password-era accounts are linked automatically when the verified Google email matches; their sites and content remain attached to the same account.
+
+## Page-aware draft generation
+
+The dashboard's **Analyze a page** flow is intentionally separate from visitor delivery. An owner submits a public page URL, Conbal fetches only that page on the registered site host, extracts readable title/headings/text, and calculates the number of slots the page can support. Pages under 180 readable words, or transactional paths such as checkout and account pages, receive no generation slots.
+
+After the owner reviews the detected page plan, **Generate drafts** submits one batched request to the configured OpenAI Responses API using Structured Outputs. The model returns only headline/body copy, editorial type, topics, and citations. Conbal validates the schema, copy budgets, source URLs, duplicate content, and visitor-facing language, then renders a safe server-owned card template. Generated balloons are always drafts with provenance attached; they never publish or run on the public request path automatically.
+
+Enable the optional generator with an encrypted Worker secret (the feature remains disabled without it):
+
+```sh
+npx wrangler secret put OPENAI_API_KEY
+# Optional model override; the default is gpt-4o-mini for low-cost structured drafts.
+npx wrangler secret put OPENAI_MODEL
+```
+
+Review generated drafts in the normal preview/editor, then publish individually or with the existing **Publish all drafts** control. The page analyzer and generation job are admin-only, capped at eight drafts per page, and reject cross-site/private URLs, non-HTML responses, oversized pages, redirects outside the registered host, and untrusted model markup.
 
 ## CSV imports and multiple sites
 

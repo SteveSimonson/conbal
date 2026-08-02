@@ -34,6 +34,7 @@ for (const [expression, description] of [
   [/email TEXT UNIQUE NOT NULL/i, 'users.email must remain unique and required.'],
   [/CREATE TABLE sites\b/i, 'schema.sql must create sites.'],
   [/site_key TEXT UNIQUE NOT NULL/i, 'sites.site_key must remain unique and required.'],
+  [/origin_url TEXT/i, 'sites.origin_url must store the optional canonical page host.'],
   [/CREATE TABLE balloons\b/i, 'schema.sql must create balloons.'],
   [/editorial_type TEXT NOT NULL DEFAULT 'did_you_know'/i, 'balloons.editorial_type must default to did_you_know.'],
   [/topics TEXT NOT NULL DEFAULT 'general'/i, 'balloons.topics must default to general.'],
@@ -44,6 +45,9 @@ for (const [expression, description] of [
   [/CREATE INDEX idx_smart_delivery_lookup ON smart_delivery_items\(site_key, topic, editorial_type, balloon_id\)/i, 'smart-delivery lookups must use the bounded topic index.'],
   [/CREATE INDEX idx_sites_user ON sites\(user_id\)/i, 'schema.sql must index sites.user_id.'],
   [/CREATE INDEX idx_balloons_site ON balloons\(site_id\)/i, 'schema.sql must index balloons.site_id.'],
+  [/CREATE TABLE generation_jobs\b/i, 'schema.sql must create page-aware generation jobs.'],
+  [/CREATE TABLE generation_items\b/i, 'schema.sql must create page-aware generation provenance.'],
+  [/CREATE UNIQUE INDEX idx_generation_active_site ON generation_jobs\(site_id\)/i, 'schema.sql must prevent concurrent generation jobs per site.'],
 ]) requireMatch(schema, expression, description);
 
 let examples;
