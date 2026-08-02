@@ -192,11 +192,11 @@ function autoDocument() {
     createElement: tagName => new FakeElement(tagName),
     getElementById: () => null,
   };
-  return { document, main };
+  return { document, main, all };
 }
 
 test('one automatic script analyzes the page and renders a fresh structured deck', async () => {
-  const { document, main } = autoDocument();
+  const { document, main, all } = autoDocument();
   const requests = [];
   const context = {
     document,
@@ -216,8 +216,8 @@ test('one automatic script analyzes the page and renders a fresh structured deck
     localStorage: { getItem: () => '[]', setItem: () => {} },
     history: { pushState() {}, replaceState() {} },
     window: { addEventListener() {} },
-    setTimeout,
-    clearTimeout,
+    setTimeout: callback => { callback(); return 0; },
+    clearTimeout: () => {},
     AbortController,
     crypto: { randomUUID: () => 'page-view-123' },
   };
@@ -229,10 +229,43 @@ test('one automatic script analyzes the page and renders a fresh structured deck
   assert.equal(requests[0].body.contract, '2.0');
   assert.equal(requests[0].body.repeat_policy, 'omit');
   assert.ok(requests[0].body.slots.length >= 3);
+  const stylesheet = all.find(node => node.rel === 'stylesheet');
+  assert.equal(stylesheet?.href, 'https://conbal.us/embed.css');
+  assert.ok(!all.some(node => node.tagName === 'STYLE'));
   const descendants = node => node.children.flatMap(child => [child, ...descendants(child)]);
   const rendered = descendants(main).filter(child => child.dataset?.conbalAutoSlot !== undefined && child.dataset.conbalState === 'ready');
   assert.equal(rendered.length, 3);
   const renderedText = descendants(main).map(child => child.textContent);
   assert.ok(renderedText.includes('Did you know?'));
   assert.ok(renderedText.includes('A useful fact'));
+});
+
+test('managed hosts keep explicit slots when the automatic flag is present', async () => {
+  const target = slot({ size: 'responsive' });
+  const script = {
+    src: 'https://conbal.us/embed.js',
+    dataset: { conbalSite: 'ABCDEFGHIJKL', conbalAuto: 'true' },
+    hasAttribute: name => name === 'data-conbal-auto',
+  };
+  const document = {
+    baseURI: 'https://host.example/page',
+    currentScript: script,
+    scripts: [script],
+    readyState: 'complete',
+    querySelector: selector => selector === '[data-conbal-managed="true"]' ? {} : null,
+    querySelectorAll: () => [target],
+  };
+  const context = {
+    document,
+    fetch: async url => {
+      assert.match(url, /\/b\/ABCDEFGHIJKL\/fact$/);
+      return { ok: true, json: async () => ({ fact: { size: 'responsive', html: '<p>Managed fact</p>', css: '' } }) };
+    },
+    URL,
+  };
+  vm.runInNewContext(source, context);
+  await flush();
+
+  assert.equal(target.style.display, 'block');
+  assert.match(target.innerHTML, /Managed fact/);
 });

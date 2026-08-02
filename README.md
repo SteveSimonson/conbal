@@ -96,6 +96,11 @@ benefit. If delivery fails or a slot cannot be filled, that slot is removed and
 the host page is unchanged. For single-page applications, route changes are
 observed automatically.
 
+Automatic cards load their styles from `https://conbal.us/embed.css`; sites
+using a Content-Security-Policy should allow that origin in `style-src` (for
+example, `style-src 'self' https://conbal.us`). The loader does not inject an
+inline style tag or inline style attributes for automatic cards.
+
 Use `data-conbal-managed="true"` on a host root when the site has its own
 renderer and should opt out of automatic placement while keeping the same
 loader available for explicit slots.

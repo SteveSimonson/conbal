@@ -191,26 +191,13 @@
     }
   }
 
-  function addStyles() {
-    if (document.getElementById('conbal-auto-styles')) return;
-    const style = document.createElement('style');
-    style.id = 'conbal-auto-styles';
-    style.textContent = `
-      [data-conbal-auto-slot] { box-sizing:border-box; clear:both; display:none; margin:clamp(1.25rem,3vw,2.75rem) auto; max-width:min(100%,72rem); width:100%; color:var(--conbal-ink,inherit); font-family:inherit; }
-      [data-conbal-auto-slot] .conbal-auto-card { align-items:center; background:var(--conbal-surface,#f3f1eb); border:1px solid color-mix(in srgb,var(--conbal-accent,#477a56) 24%,transparent); border-radius:1rem; box-sizing:border-box; display:grid; gap:1rem; grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr); padding:clamp(1rem,2.5vw,1.5rem); }
-      [data-conbal-auto-slot] [data-conbal-label] { color:var(--conbal-accent,#477a56); font-size:.68rem; font-weight:700; letter-spacing:.14em; margin:0 0 .45rem; text-transform:uppercase; }
-      [data-conbal-auto-slot] h3 { color:inherit; font:inherit; font-size:clamp(1.05rem,2vw,1.45rem); font-weight:700; line-height:1.18; margin:0; }
-      [data-conbal-auto-slot] p { color:inherit; font-size:.92rem; line-height:1.55; margin:0; opacity:.82; }
-      [data-conbal-auto-slot][data-conbal-role="section-break"] .conbal-auto-card { background:var(--conbal-surface-strong,#173829); color:var(--conbal-on-accent,#fff); }
-      [data-conbal-auto-slot][data-conbal-role="section-break"] [data-conbal-label] { color:var(--conbal-on-accent,#b8e1bd); }
-      [data-conbal-auto-slot][data-conbal-role="aside-note"] { max-width:42rem; }
-      [data-conbal-auto-slot][data-conbal-role="aside-note"] .conbal-auto-card { display:block; }
-      [data-conbal-auto-slot][data-conbal-role="aside-note"] p { margin-top:.65rem; }
-      [data-conbal-auto-slot][data-conbal-role="grid-tile"] .conbal-auto-card { grid-template-columns:auto minmax(0,1fr); }
-      @media (max-width:640px) { [data-conbal-auto-slot] .conbal-auto-card { display:block; } [data-conbal-auto-slot] p { margin-top:.7rem; } }
-      @media (prefers-reduced-motion:reduce) { [data-conbal-auto-slot] { scroll-behavior:auto; } }
-    `;
-    document.head.appendChild(style);
+  function addStyles(origin) {
+    if (document.querySelector('link[data-conbal-auto-styles]')) return;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = `${origin}/embed.css`;
+    link.dataset.conbalAutoStyles = '';
+    document.head.appendChild(link);
   }
 
   function renderAuto(slot, assignment) {
@@ -240,16 +227,17 @@
     body.textContent = content.body;
     card.append(copy, body);
     slot.append(card);
-    slot.style.display = 'block';
+    // Visibility is controlled by the external stylesheet so strict CSP does
+    // not need to permit inline style attributes.
   }
 
   async function runAuto(origin, site) {
     const root = pageRoot();
     const kind = pageKind(root);
-    if (kind === 'blocked' || document.querySelector('[data-conbal-managed="true"]')) return;
+    if (kind === 'blocked' || document.querySelector('[data-conbal-managed="true"]')) return 'blocked';
     const plans = pageSlots(root, kind);
-    if (!plans.length) return;
-    addStyles();
+    if (!plans.length) return 'empty';
+    addStyles(origin);
     const run = ++autoRun;
     autoController?.abort();
     autoController = new AbortController();
@@ -284,24 +272,46 @@
       const assignments = payload?.assignments;
       if (!assignments || typeof assignments !== 'object' || Array.isArray(assignments)) {
         slots.forEach(slot => slot.remove());
-        return;
+        return 'started';
       }
       slots.forEach((slot, index) => renderAuto(slot, assignments[plans[index].id]));
       remember(site, assignments, previous);
+      return 'started';
     } catch {
       if (run === autoRun) slots.forEach(slot => slot.remove());
+      return 'error';
     }
+  }
+
+  let autoSchedule = 0;
+
+  function cancelAuto() {
+    autoSchedule += 1;
+    autoRun += 1;
+    autoController?.abort();
+    autoController = undefined;
+  }
+
+  function scheduleAuto(origin, site, generation, attempt = 0) {
+    const maxAttempts = 8;
+    const delay = attempt === 0 ? 40 : Math.min(500, 40 * (attempt + 1));
+    setTimeout(async () => {
+      if (generation !== autoSchedule || document.querySelector('[data-conbal-auto-slot]')) return;
+      const status = await runAuto(origin, site);
+      if (status === 'empty' && attempt < maxAttempts && generation === autoSchedule) {
+        scheduleAuto(origin, site, generation, attempt + 1);
+      }
+    }, delay);
   }
 
   function watchAuto(origin, site) {
     let last = location.href;
-    let timer;
     const rerun = () => {
       if (location.href === last) return;
       last = location.href;
-      clearTimeout(timer);
+      cancelAuto();
       document.querySelectorAll('[data-conbal-auto-slot]').forEach(slot => slot.remove());
-      timer = setTimeout(() => runAuto(origin, site), 40);
+      scheduleAuto(origin, site, autoSchedule);
     };
     ['pushState', 'replaceState'].forEach(method => {
       const original = history[method];
@@ -311,15 +321,18 @@
       history[method] = wrapped;
     });
     window.addEventListener('popstate', rerun);
-    setTimeout(() => {
-      if (!document.querySelector('[data-conbal-auto-slot]')) runAuto(origin, site);
-    }, 260);
+    scheduleAuto(origin, site, autoSchedule);
   }
 
   function start() {
     const { origin, site, auto } = scriptConfig();
     if (site && auto) {
-      runAuto(origin, site);
+      // A managed host can keep its own renderer while still using the
+      // legacy explicit-slot API from this same script.
+      if (document.querySelector('[data-conbal-managed="true"]')) {
+        renderLegacySlots(origin);
+        return;
+      }
       watchAuto(origin, site);
       return;
     }
