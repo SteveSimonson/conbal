@@ -133,7 +133,10 @@
     const target = Math.min(8, Math.max(3, 2 + Math.floor(words / 350)));
     const sections = [...root.querySelectorAll('section, article')]
       .filter(node => visible(node) && textOf(node).length >= 80 && !node.parentElement?.closest('section, article'));
-    const headings = [...root.querySelectorAll('h2, h3')].filter(visible).filter(node => textOf(node).length >= 8);
+    const headings = [...root.querySelectorAll('h2, h3')]
+      .filter(visible)
+      .filter(node => textOf(node).length >= 8)
+      .filter(node => !node.closest('section, article'));
     const candidates = [...new Set([...sections, ...headings])];
     if (candidates.length < target) {
       const paragraphs = [...root.querySelectorAll('p')]
