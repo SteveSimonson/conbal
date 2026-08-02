@@ -74,13 +74,14 @@ async function publishAllDrafts(siteId, siteName) {
   } catch (error) { button.disabled = false; say(error.message); }
 }
 async function reindexSite(siteId) {
-  const button = $('#reindex-site'); button.disabled = true;
+  const button = $('#reindex-site'), controls = [...document.querySelectorAll('button, input, select, textarea')];
+  controls.forEach(control => { control.disabled = true; });
   try {
     const result = await api(`/sites/${siteId}/balloons/reindex`, { method: 'POST' });
     if (result.skipped) throw new Error(`Indexed ${result.indexed} of ${result.total}; ${result.skipped} published balloon${result.skipped === 1 ? '' : 's'} need attention.`);
-    say(`Delivery index rebuilt for ${result.indexed} published balloon${result.indexed === 1 ? '' : 's'}.`);
+    if (selectedSiteId === siteId) say(`Delivery index rebuilt for ${result.indexed} published balloon${result.indexed === 1 ? '' : 's'}.`);
   } catch (error) { say(error.message); }
-  finally { button.disabled = false; }
+  finally { controls.filter(control => control.isConnected).forEach(control => { control.disabled = false; }); button.disabled = false; }
 }
 async function editor(siteId, balloonId) {
   let balloon = { title: '', slug: '', html: '', css: '', size: 'responsive', editorial_type: '', topics: '' };
