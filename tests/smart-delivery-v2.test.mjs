@@ -34,6 +34,7 @@ function v2Request(data = requestBody(), method = 'POST') {
 function fakeEnvironment(inventory = [], { reverseEveryQuery = false } = {}) {
   const counted = [];
   const queries = [];
+  const batches = [];
   const kvValues = new Map(inventory.map(item => [
     `b:${siteKey}:${item.slug}`,
     { balloonId: item.id, html: item.kvHtml ?? item.html, css: item.css ?? '.owner{}', size: item.size ?? 'responsive' },
@@ -57,12 +58,16 @@ function fakeEnvironment(inventory = [], { reverseEveryQuery = false } = {}) {
         },
       };
     },
+    async batch(statements) {
+      batches.push(statements.map(statement => statement.sql));
+      return Promise.all(statements.map(statement => statement.all()));
+    },
   };
   const CONBAL_KV = {
     async get(key) { return kvValues.get(key) ?? null; },
     async put(key, value) { kvValues.set(key, JSON.parse(value)); },
   };
-  return { env: { DB, CONBAL_KV, ASSETS: { fetch: () => new Response('asset') } }, counted, queries };
+  return { env: { DB, CONBAL_KV, ASSETS: { fetch: () => new Response('asset') } }, batches, counted, queries };
 }
 
 const inventory = [
@@ -107,10 +112,29 @@ test('v2 returns the structured 2.0 contract with bounded plain text only', asyn
   assert.match(body.assignments.primary.assignment_id, /^v2_[0-9a-f]{32}$/);
   assert.doesNotMatch(JSON.stringify(body), /<[^>]*>|html|css|color|background|alert|Stale KV/);
   assert.deepEqual(counted, [['safe']]);
-  assert.equal(queries.length, 1);
-  assert.match(queries[0], /smart_delivery_items/);
-  assert.match(queries[0], /LIMIT 16/);
-  assert.doesNotMatch(queries[0], /instr\(|ROW_NUMBER/);
+  assert.equal(queries.length, 2);
+  assert.ok(queries.every(query => /smart_delivery_items/.test(query)));
+  assert.ok(queries.every(query => /LIMIT 16/.test(query)));
+  assert.ok(queries.every(query => !/instr\(|ROW_NUMBER|UNION ALL/.test(query)));
+});
+
+test('v2 batches a production-shaped three-slot inventory without a compound SELECT', async () => {
+  const liveSlots = [
+    { ...baseSlot, id: 'product-spec-note', topics: ['kitchen', 'bamboo-basics'] },
+    { ...baseSlot, id: 'product-guide-note', role: 'aside-note', topics: ['kitchen', 'care', 'bamboo-basics'] },
+    { ...baseSlot, id: 'product-related-card', role: 'grid-tile', budget: 'compact-v1', topics: ['kitchen', 'product-research'] },
+  ];
+  const candidates = inventory.map(item => ({ ...item, topics: 'general' }));
+  const { env, batches, queries } = fakeEnvironment(candidates);
+  const response = await worker.fetch(v2Request(requestBody({ slots: liveSlots })), env, {});
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(Object.keys(body.assignments).length, 3);
+  assert.equal(new Set(Object.values(body.assignments).map(item => item.slug)).size, 3);
+  assert.equal(batches.length, 1);
+  assert.equal(queries.length, 10);
+  assert.ok(queries.every(query => !/UNION ALL/.test(query)));
 });
 
 test('v2 assignments are stable across retries and database row order', async () => {
