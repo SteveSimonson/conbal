@@ -155,10 +155,10 @@ class FakeElement {
   hasAttribute(name) { return Object.hasOwn(this.attributes, name); }
 }
 
-function autoDocument() {
-  const main = new FakeElement('main', 'Useful page text '.repeat(90));
+function autoDocument({ wordRepeats = 360, sectionCount = 4 } = {}) {
+  const main = new FakeElement('main', 'Useful page text '.repeat(wordRepeats));
   const heading = new FakeElement('h1', 'Bamboo home guide');
-  const sections = [1, 2, 3, 4].map(index => {
+  const sections = Array.from({ length: sectionCount }, (_, offset) => offset + 1).map(index => {
     const section = new FakeElement('section', `Section ${index} ${'relevant detail '.repeat(30)}`);
     section.append(new FakeElement('h2', `Section ${index}`));
     return section;
@@ -195,6 +195,36 @@ function autoDocument() {
   };
   return { document, main, heading, all };
 }
+
+async function automaticSlotCount(options) {
+  const { document } = autoDocument(options);
+  const requests = [];
+  const scriptContext = {
+    document,
+    fetch: async (url, init) => {
+      requests.push({ url, body: JSON.parse(init.body) });
+      return { ok: true, json: async () => ({ assignments: {} }) };
+    },
+    URL,
+    location: { href: 'https://host.example/page', pathname: '/guide' },
+    localStorage: { getItem: () => '[]', setItem: () => {} },
+    history: { pushState() {}, replaceState() {} },
+    window: { addEventListener() {} },
+    setTimeout: callback => { callback(); return 0; },
+    clearTimeout: () => {},
+    AbortController,
+    crypto: { randomUUID: () => 'page-view-123' },
+  };
+  vm.runInNewContext(source, scriptContext);
+  await flush();
+  return requests[0]?.body.slots.length || 0;
+}
+
+test('automatic slot count follows page capacity and available anchors', async () => {
+  assert.equal(await automaticSlotCount({ wordRepeats: 60, sectionCount: 6 }), 1);
+  assert.equal(await automaticSlotCount({ wordRepeats: 180, sectionCount: 6 }), 2);
+  assert.equal(await automaticSlotCount({ wordRepeats: 360, sectionCount: 1 }), 2);
+});
 
 test('one automatic script analyzes the page and renders a fresh structured deck', async () => {
   const { document, main, all } = autoDocument();
