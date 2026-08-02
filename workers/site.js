@@ -19,19 +19,7 @@ const json = (data, init = {}) => new Response(JSON.stringify(data), { ...init, 
 const fail = (error, status = 400) => json({ error }, { status });
 const id = () => crypto.randomUUID();
 const token = (bytes = 18) => { const a = new Uint8Array(bytes); crypto.getRandomValues(a); return btoa(String.fromCharCode(...a)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''); };
-const b64 = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes)));
-const unb64 = value => Uint8Array.from(atob(value), x => x.charCodeAt(0));
 
-async function hashPassword(password, saved) {
-  const iterations = saved ? Number(saved.match(/^pbkdf2:(\d+)\./)?.[1]) : 100000;
-  if (!Number.isInteger(iterations) || iterations < 100000 || iterations > 500000) throw new Error('Unsupported password hash');
-  const salt = saved ? unb64(saved.split('.')[1]) : crypto.getRandomValues(new Uint8Array(16));
-  const passwordBytes = encoder.encode(password);
-  const key = await crypto.subtle.importKey('raw', passwordBytes.buffer, { name: 'PBKDF2' }, false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', iterations, salt: salt.buffer }, key, 256);
-  return `pbkdf2:${iterations}.${b64(salt)}.${b64(bits)}`;
-}
-async function verifyPassword(password, stored) { return (await hashPassword(password, stored)) === stored; }
 function cookies(request) { return Object.fromEntries((request.headers.get('cookie') || '').split(';').map(v => v.trim().split('=').map(decodeURIComponent)).filter(v => v[0])); }
 async function body(request) { try { return await request.json(); } catch { throw new Error('Expected a JSON body'); } }
 function importError(message, status = 400) { throw Object.assign(new Error(message), { status }); }
@@ -74,7 +62,7 @@ function validEmail(email) { return typeof email === 'string' && /^[^\s@]+@[^\s@
 function validSlug(slug) { return typeof slug === 'string' && /^[a-z0-9-]{1,80}$/.test(slug); }
 function validSiteKey(siteKey) { return typeof siteKey === 'string' && /^[A-Za-z0-9_-]{12}$/.test(siteKey); }
 function validMetadataToken(value) { return typeof value === 'string' && /^[a-z0-9-]{1,48}$/.test(value); }
-function isEmailConflict(error) { return /UNIQUE constraint failed: users\.email/i.test(String(error?.message || error)); }
+function isGoogleConflict(error) { return /UNIQUE constraint failed: users\.(email|google_id)/i.test(String(error?.message || error)); }
 function isBalloonSlugConflict(error) { return /UNIQUE constraint failed: balloons\.site_id, balloons\.slug/i.test(String(error?.message || error)); }
 function cookie(value, age = 0) { return `conbal_session=${encodeURIComponent(value || '')}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`; }
 function oauthStateCookie(value, age = 0) { return `conbal_oauth_state=${encodeURIComponent(value || '')}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`; }
@@ -137,7 +125,22 @@ async function googleAuth(request, env, url) {
   const tokens=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({code,client_id:env.GOOGLE_CLIENT_ID,client_secret:env.GOOGLE_CLIENT_SECRET,redirect_uri:callback,grant_type:'authorization_code'})}); if(!tokens.ok)return fail('Google could not complete sign-in',502);
   let tokenData; try { tokenData=await tokens.json(); } catch { return fail('Google returned an invalid sign-in response',502); } if(typeof tokenData.access_token!=='string'||!tokenData.access_token)return fail('Google returned an invalid sign-in response',502);
   const profileResponse=await fetch('https://openidconnect.googleapis.com/v1/userinfo',{headers:{authorization:`Bearer ${tokenData.access_token}`}}); if(!profileResponse.ok)return fail('Google could not retrieve your profile',502); let profile; try { profile=await profileResponse.json(); } catch { return fail('Google returned an invalid profile',502); }
-  const email=typeof profile.email==='string' ? profile.email.trim().toLowerCase() : ''; if(typeof profile.sub!=='string'||!profile.sub||!validEmail(email)||profile.email_verified!==true)return fail('Google did not provide a verified email',403); let user=await env.DB.prepare('SELECT id,email FROM users WHERE google_id=?').bind(profile.sub).first(); if(!user){ if(!oauthState.inviteAuthorized)return fail('A valid invite code is required',403); user={id:id(),email}; try{await env.DB.prepare('INSERT INTO users (id,email,password_hash,google_id) VALUES (?,?,?,?)').bind(user.id,user.email,await hashPassword(token(24)),profile.sub).run()}catch{return fail('An account already exists with this email; sign in with email first',409)} } const s=await createSession(env,user); const headers=new Headers({location:`${new URL(callback).origin}/admin/`}); headers.append('set-cookie',cookie(s,604800)); headers.append('set-cookie',oauthStateCookie('',0)); return new Response(null,{status:302,headers});
+  const email=typeof profile.email==='string' ? profile.email.trim().toLowerCase() : ''; if(typeof profile.sub!=='string'||!profile.sub||!validEmail(email)||profile.email_verified!==true)return fail('Google did not provide a verified email',403);
+  let user=await env.DB.prepare('SELECT id,email FROM users WHERE google_id=?').bind(profile.sub).first();
+  if(!user){
+    const existing=await env.DB.prepare('SELECT id,email,google_id FROM users WHERE email=?').bind(email).first();
+    if(existing?.google_id && existing.google_id!==profile.sub)return fail('This email is linked to another Google account',409);
+    if(existing){
+      await env.DB.prepare('UPDATE users SET google_id=? WHERE id=? AND google_id IS NULL').bind(profile.sub,existing.id).run();
+      user=await env.DB.prepare('SELECT id,email FROM users WHERE google_id=?').bind(profile.sub).first();
+      if(!user)return fail('Your Google account could not be linked; please try again',409);
+    } else {
+      if(!oauthState.inviteAuthorized)return fail('A valid invite code is required',403);
+      user={id:id(),email};
+      try{await env.DB.prepare('INSERT INTO users (id,email,password_hash,google_id) VALUES (?,?,?,?)').bind(user.id,user.email,`google:${token(24)}`,profile.sub).run()}catch(error){if(isGoogleConflict(error))return fail('Your Google account could not be linked; please try again',409);throw error;}
+    }
+  }
+  const s=await createSession(env,user); const headers=new Headers({location:`${new URL(callback).origin}/admin/`}); headers.append('set-cookie',cookie(s,604800)); headers.append('set-cookie',oauthStateCookie('',0)); return new Response(null,{status:302,headers});
 }
 
 async function recordDeliveries(env, siteKey, delivered) {
@@ -381,21 +384,7 @@ async function api(request, env, url) {
   const path = url.pathname, method = request.method;
   if (path === '/api/health') return json({ ok: Boolean(env.DB && env.CONBAL_KV) });
   if ((path === '/api/auth/google' && (method === 'GET' || method === 'POST')) || (path === '/api/auth/google/callback' && method === 'GET')) return googleAuth(request,env,url);
-  if (path === '/api/signup' && method === 'POST') {
-    const { email, password, inviteCode } = await body(request); const normalized = String(email || '').trim().toLowerCase();
-    if (!validEmail(normalized) || typeof password !== 'string' || password.length < 8) return fail('Use a valid email and password of at least 8 characters');
-    if (env.SIGNUP_INVITE_CODE && inviteCode !== env.SIGNUP_INVITE_CODE) return fail('A valid invite code is required', 403);
-    const user = { id: id(), email: normalized };
-    let passwordHash;
-    try { passwordHash = await hashPassword(password); } catch (error) { console.error('password hash failed', error); return fail('Unable to secure the account', 500); }
-    try { await env.DB.prepare('INSERT INTO users (id,email,password_hash) VALUES (?,?,?)').bind(user.id, user.email, passwordHash).run(); } catch (error) { if (isEmailConflict(error)) return fail('That email is already registered', 409); console.error('signup insert failed', error); return fail('Unable to create the account', 500); }
-    const s = token(16); await env.CONBAL_KV.put(`s:${s}`, JSON.stringify(user), { expirationTtl: 604800 }); return json({ user }, { status: 201, headers: { 'set-cookie': cookie(s, 604800) } });
-  }
-  if (path === '/api/login' && method === 'POST') {
-    const { email, password } = await body(request); const user = await env.DB.prepare('SELECT * FROM users WHERE email=?').bind(String(email || '').trim().toLowerCase()).first();
-    if (!user || typeof password !== 'string' || !await verifyPassword(password, user.password_hash)) return fail('Invalid email or password', 401);
-    const s = token(16); await env.CONBAL_KV.put(`s:${s}`, JSON.stringify({ id: user.id, email: user.email }), { expirationTtl: 604800 }); return json({ user: { id: user.id, email: user.email } }, { headers: { 'set-cookie': cookie(s, 604800) } });
-  }
+  if ((path === '/api/signup' || path === '/api/login') && (method === 'POST' || method === 'GET')) return fail('Google sign-in is the only supported login method', 410);
   if (path === '/api/logout' && method === 'POST') { const s = cookies(request).conbal_session; if (s) await env.CONBAL_KV.delete(`s:${s}`); return json({ ok: true }, { headers: { 'set-cookie': cookie('', 0) } }); }
   const user = await requireUser(request, env);
   if (path === '/api/me' && method === 'GET') return json({ user });
