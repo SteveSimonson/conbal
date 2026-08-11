@@ -17,7 +17,7 @@ const metadata = balloon => {
   const topics = Array.isArray(balloon.topics) ? balloon.topics : String(balloon.topics || '').split(',').map(value => value.trim()).filter(Boolean);
   return `<span class="meta">Editorial type: ${type}${topics.length ? ` · Topics: ${esc(topics.join(', '))}` : ''}</span>`;
 };
-const profileSummary = profile => `<div class="profile"><strong>${esc(profile.title || profile.url)}</strong><span class="meta">${esc(profile.kind)} page · ${count(profile.word_count)} readable words · ${profile.slots.length} recommended draft${profile.slots.length === 1 ? '' : 's'}</span><span class="meta">Topics: ${esc((profile.topics || []).join(', '))}</span>${profile.slots.length ? `<ul>${profile.slots.map(slot => `<li>${esc(slot.id)} · ${esc(slot.role)} · ${esc(slot.budget)}</li>`).join('')}</ul>` : '<p class="help">This page is too short or transactional for a useful insertion set.</p>'}</div>`;
+const profileSummary = profile => `<div class="profile"><strong>${esc(profile.title || profile.url)}</strong><span class="meta">${esc(profile.kind)} page · ${count(profile.word_count)} readable words · ${profile.slots.length} recommended draft${profile.slots.length === 1 ? '' : 's'}</span><span class="meta">Topics: ${esc((profile.topics || []).join(', '))}</span>${profile.truncated ? '<p class="help"><strong>Large page handled safely:</strong> Conbal analyzed a bounded readable excerpt so the dashboard stays responsive. Review generated drafts against the live page.</p>' : ''}${profile.slots.length ? `<ul>${profile.slots.map(slot => `<li>${esc(slot.id)} · ${esc(slot.role)} · ${esc(slot.budget)}</li>`).join('')}</ul>` : '<p class="help">This page is too short or transactional for a useful insertion set.</p>'}</div>`;
 let selectedSiteId = '';
 
 async function copy(text) { try { await navigator.clipboard.writeText(text); say('Automatic integration code copied. Paste it once into your site.'); } catch { say('Could not copy automatically. Select the integration code and copy it manually.'); } }
@@ -81,7 +81,7 @@ async function analyzePage(siteId) {
   const input = $('#generation-page-url'), button = $('#analyze-page'), output = $('#generation-profile'), generate = $('#start-generation');
   if (!input?.value) return say('Enter the public page URL to analyze.');
   button.disabled = true; generate.disabled = true; output.innerHTML = '<p class="help">Reading the page structure…</p>';
-  try { const result = await api(`/sites/${siteId}/page-profile`, { method: 'POST', body: JSON.stringify({ page_url: input.value.trim() }) }); output.innerHTML = profileSummary(result.profile); output.dataset.profileReady = 'true'; generate.disabled = !result.profile.slots.length; say(result.profile.slots.length ? 'Page analyzed. Review the plan, then generate drafts.' : 'Page analyzed, but it does not need a balloon yet.'); }
+  try { const result = await api(`/sites/${siteId}/page-profile`, { method: 'POST', body: JSON.stringify({ page_url: input.value.trim() }) }); output.innerHTML = profileSummary(result.profile); output.dataset.profileReady = 'true'; generate.disabled = !result.profile.slots.length; say(result.profile.slots.length ? `Page analyzed${result.profile.truncated ? ' from a bounded excerpt' : ''}. Review the plan, then generate drafts.` : 'Page analyzed, but it does not need a balloon yet.'); }
   catch (error) { output.innerHTML = ''; say(error.message); }
   finally { button.disabled = false; }
 }
