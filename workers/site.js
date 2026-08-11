@@ -15,7 +15,10 @@ const maxImportRows = 100;
 const maxImportRowChars = 75000;
 const maxStructuredBytes = 32768;
 const maxStructuredCandidatesPerSlot = 16;
-const generationMaxPageBytes = 262144;
+// Keep analysis bounded so a very large page cannot consume unbounded worker
+// memory or CPU. Pages over this budget are sampled, not rejected: the
+// analyzer only needs a representative readable excerpt to recommend slots.
+const generationMaxPageBytes = 1048576;
 const generationMaxPageWords = 12000;
 const generationMaxSourceUrls = 16;
 const generationTimeoutMs = 6500;
@@ -77,17 +80,24 @@ function validatePageUrl(value, site = null) {
 async function readLimitedResponse(response, limit) {
   const reader = response.body?.getReader();
   if (!reader) generationFailure('Page returned an unreadable body', 502);
-  const chunks = []; let length = 0;
+  const chunks = []; let length = 0; let truncated = false;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    const remaining = limit - length;
+    if (value.byteLength > remaining) {
+      if (remaining > 0) chunks.push(value.slice(0, remaining));
+      length = limit;
+      truncated = true;
+      await reader.cancel();
+      break;
+    }
     length += value.byteLength;
-    if (length > limit) { await reader.cancel(); generationFailure('Page is too large to analyze', 413); }
     chunks.push(value);
   }
   const bytes = new Uint8Array(length); let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  return new TextDecoder().decode(bytes);
+  return { text: new TextDecoder().decode(bytes), truncated };
 }
 async function fetchPageHtml(pageUrl, site) {
   let current = validatePageUrl(pageUrl, site);
@@ -112,7 +122,10 @@ async function fetchPageHtml(pageUrl, site) {
     if (!response.ok) generationFailure(`Page returned HTTP ${response.status}`, 502);
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
     if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) generationFailure('Page is not HTML', 415);
-    try { return { url: current, html: await readLimitedResponse(response, generationMaxPageBytes) }; } finally { clearTimeout(timeout); }
+    try {
+      const page = await readLimitedResponse(response, generationMaxPageBytes);
+      return { url: current, html: page.text, truncated: page.truncated };
+    } finally { clearTimeout(timeout); }
   }
   generationFailure('Page could not be fetched', 502);
 }
@@ -182,10 +195,10 @@ async function buildPageProfile(rawUrl, site) {
   const slots = pageSlotsForProfile(wordCount, kind);
   const fingerprintBytes = await crypto.subtle.digest('SHA-256', encoder.encode(`${fetched.url}\u0000${title}\u0000${text.slice(0, 4000)}`));
   const fingerprint = Array.from(new Uint8Array(fingerprintBytes), byte => byte.toString(16).padStart(2, '0')).join('');
-  return { url: fetched.url.toString(), origin: canonicalOrigin(fetched.url), title: title.slice(0, 200), kind, headings, topics: generationTopics(fetched.url, kind, title, headings, meta), word_count: wordCount, slots, source_urls: pageSourceUrls(fetched.url, fetched.html), excerpt: text.slice(0, 12000), fingerprint };
+  return { url: fetched.url.toString(), origin: canonicalOrigin(fetched.url), title: title.slice(0, 200), kind, headings, topics: generationTopics(fetched.url, kind, title, headings, meta), word_count: wordCount, slots, source_urls: pageSourceUrls(fetched.url, fetched.html), excerpt: text.slice(0, 12000), truncated: fetched.truncated, fingerprint };
 }
 function publicPageProfile(profile) {
-  return { url: profile.url, origin: profile.origin, title: profile.title, kind: profile.kind, headings: profile.headings, topics: profile.topics, word_count: profile.word_count, slots: profile.slots, source_urls: profile.source_urls, fingerprint: profile.fingerprint };
+  return { url: profile.url, origin: profile.origin, title: profile.title, kind: profile.kind, headings: profile.headings, topics: profile.topics, word_count: profile.word_count, slots: profile.slots, source_urls: profile.source_urls, truncated: Boolean(profile.truncated), fingerprint: profile.fingerprint };
 }
 
 function cookies(request) { return Object.fromEntries((request.headers.get('cookie') || '').split(';').map(v => v.trim().split('=').map(decodeURIComponent)).filter(v => v[0])); }
@@ -497,7 +510,8 @@ function generatedSchema() {
 function generationPrompt(profile) {
   const slotBrief = profile.slots.map(slot => `${slot.id}: ${slot.role}, ${slot.budget}`).join('; ');
   const sourceList = profile.source_urls.map((url, index) => `${index + 1}. ${url}`).join('\n');
-  return `Create exactly one visitor-facing content balloon draft for each requested slot. These are helpful facts or practical notes that belong on the page, not advertisements. Never mention Conbal, content balloons, prompts, AI, implementation, or this instruction. Do not invent claims beyond the page excerpt; if a claim is uncertain, make the note a careful observation or a tip. Use concise, plain language and avoid repeating the page title. Return one item for every slot ID, with the slot IDs unchanged. Use only source URLs from the allowed list; if the page itself is the only source, cite that page URL.\n\nPage title: ${profile.title}\nPage kind: ${profile.kind}\nPage topics: ${profile.topics.join(', ')}\nRequested slots: ${slotBrief}\nAllowed source URLs:\n${sourceList}\n\nPage excerpt:\n${profile.excerpt}`;
+  const scopeNote = profile.truncated ? 'The page was larger than the analyzer budget, so this is a bounded readable excerpt. Do not infer that details missing from the excerpt are absent from the page.' : '';
+  return `Create exactly one visitor-facing content balloon draft for each requested slot. These are helpful facts or practical notes that belong on the page, not advertisements. Never mention Conbal, content balloons, prompts, AI, implementation, or this instruction. Do not invent claims beyond the page excerpt; if a claim is uncertain, make the note a careful observation or a tip. Use concise, plain language and avoid repeating the page title. Return one item for every slot ID, with the slot IDs unchanged. Use only source URLs from the allowed list; if the page itself is the only source, cite that page URL.\n\nPage title: ${profile.title}\nPage kind: ${profile.kind}\nPage topics: ${profile.topics.join(', ')}\nRequested slots: ${slotBrief}\nAllowed source URLs:\n${sourceList}\n\n${scopeNote}\nPage excerpt:\n${profile.excerpt}`;
 }
 async function generateWithOpenAI(env, profile) {
   if (!env.OPENAI_API_KEY) generationFailure('Page-aware generation is not configured. Add the OPENAI_API_KEY Worker secret.', 503);

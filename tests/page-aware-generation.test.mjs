@@ -109,6 +109,24 @@ test('page profile rejects private and cross-site URLs before fetching', async (
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('page profile samples oversized HTML within a bounded budget', async () => {
+  const environment = environmentForPage();
+  const originalFetch = globalThis.fetch;
+  const oversizedHtml = pageHtml.replace('Bamboo guide', 'Large events guide').replace('</body>', `${' '.repeat(1100000)}</body>`);
+  globalThis.fetch = async input => {
+    assert.equal(String(input), pageUrl);
+    return new Response(oversizedHtml, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+  };
+  try {
+    const response = await worker.fetch(new Request('https://conbal.us/api/sites/site-1/page-profile', { method: 'POST', headers: { cookie: 'conbal_session=session', 'content-type': 'application/json' }, body: JSON.stringify({ page_url: pageUrl }) }), environment, {});
+    const result = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(result.profile.truncated, true);
+    assert.equal(result.profile.title, 'Large events guide');
+    assert.equal(result.profile.slots.length, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('generation requires a server-side OpenAI key and never falls back to visitor delivery', async () => {
   const environment = environmentForPage({ key: null });
   const response = await worker.fetch(new Request('https://conbal.us/api/sites/site-1/generation-jobs', { method: 'POST', headers: { cookie: 'conbal_session=session', 'content-type': 'application/json' }, body: JSON.stringify({ page_url: pageUrl }) }), environment, {});

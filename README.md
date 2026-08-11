@@ -78,7 +78,7 @@ npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put OPENAI_MODEL
 ```
 
-Review generated drafts in the normal preview/editor, then publish individually or with the existing **Publish all drafts** control. The page analyzer and generation job are admin-only, capped at eight drafts per page, and reject cross-site/private URLs, non-HTML responses, oversized pages, redirects outside the registered host, and untrusted model markup.
+Review generated drafts in the normal preview/editor, then publish individually or with the existing **Publish all drafts** control. The page analyzer and generation job are admin-only, capped at eight drafts per page, and reject cross-site/private URLs, non-HTML responses, redirects outside the registered host, and untrusted model markup. Very large HTML responses are sampled within a bounded analyzer budget and reported as truncated profiles instead of blocking the dashboard.
 
 ## CSV imports and multiple sites
 
