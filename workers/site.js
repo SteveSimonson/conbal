@@ -19,6 +19,7 @@ const maxStructuredCandidatesPerSlot = 16;
 // memory or CPU. Pages over this budget are sampled, not rejected: the
 // analyzer only needs a representative readable excerpt to recommend slots.
 const generationMaxPageBytes = 1048576;
+const generationMaxRawPageBytes = generationMaxPageBytes * 4;
 const generationMaxPageWords = 12000;
 const generationMaxSourceUrls = 16;
 const generationTimeoutMs = 6500;
@@ -97,7 +98,20 @@ async function readLimitedResponse(response, limit) {
   }
   const bytes = new Uint8Array(length); let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  return { text: new TextDecoder().decode(bytes), truncated };
+  return { text: new TextDecoder().decode(bytes), byteLength: length, truncated };
+}
+function stripAnalysisNoise(html) {
+  // Discard high-volume non-content blocks before applying the readable HTML
+  // budget. The optional closing tag keeps truncated script/style blocks from
+  // hiding all of the useful markup that was captured before them.
+  return String(html)
+    .replace(/<!--(?:[\s\S]*?)(?:-->|$)/g, '')
+    .replace(/<(script|style|noscript|template|svg)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, '');
+}
+function truncateAnalysisText(text, limit) {
+  const bytes = encoder.encode(text);
+  if (bytes.byteLength <= limit) return { text, truncated: false };
+  return { text: new TextDecoder().decode(bytes.slice(0, limit)), truncated: true };
 }
 async function fetchPageHtml(pageUrl, site) {
   let current = validatePageUrl(pageUrl, site);
@@ -123,8 +137,9 @@ async function fetchPageHtml(pageUrl, site) {
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
     if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) generationFailure('Page is not HTML', 415);
     try {
-      const page = await readLimitedResponse(response, generationMaxPageBytes);
-      return { url: current, html: page.text, truncated: page.truncated };
+      const raw = await readLimitedResponse(response, generationMaxRawPageBytes);
+      const compact = truncateAnalysisText(stripAnalysisNoise(raw.text), generationMaxPageBytes);
+      return { url: current, html: compact.text, truncated: raw.truncated || raw.byteLength > generationMaxPageBytes || compact.truncated };
     } finally { clearTimeout(timeout); }
   }
   generationFailure('Page could not be fetched', 502);
