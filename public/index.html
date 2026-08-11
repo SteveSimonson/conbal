@@ -3,59 +3,69 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Create lightweight promotional blocks, announcements, and calls to action—then publish them across your sites with one deferred script.">
-  <title>Conbal — publish the pieces your website needs</title>
+  <meta name="description" content="Conbal is a lightweight content layer for publishing useful, page-aware moments across every website you run.">
+  <title>Conbal — put the right thought in the right place</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/marketing.css">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="container topbar">
-    <a class="brand" href="/" aria-label="Conbal home"><span class="brand-mark" aria-hidden="true"></span>Conbal</a>
-    <nav class="nav-actions" aria-label="Main navigation"><a class="nav-link" href="#examples">Live examples</a><a class="nav-link" href="/admin/login.html">Sign in</a><a class="button" href="/admin/login.html">Start creating</a></nav>
+    <a class="brand" href="/" aria-label="Conbal home"><span class="brand-mark" aria-hidden="true"></span><span>Conbal</span></a>
+    <nav class="nav-actions" aria-label="Main navigation">
+      <a class="nav-link" href="#examples">Examples</a>
+      <a class="nav-link" href="#method">Method</a>
+      <a class="nav-link" href="/admin/login.html">Sign in</a>
+      <a class="button" href="/admin/login.html">Enter the room ↗</a>
+    </nav>
   </header>
+
   <main id="main">
     <section class="container hero">
       <div class="hero-copy">
-        <p class="eyebrow">Content delivery for your website</p>
-        <h1>Publish the pieces your website needs.</h1>
-        <p>Create lightweight promotional blocks, announcements, and calls to action—then place them exactly where they matter.</p>
-        <div class="hero-actions"><a class="button" href="/admin/login.html">Create your first balloon</a><a class="button button-secondary" href="#examples">See live examples</a></div>
-        <div class="micro-proof">One deferred script. No framework required.</div>
+        <p class="eyebrow"><span class="eyebrow-index">01 /</span> A live editorial layer for the web</p>
+        <h1>Put the right <em>thought</em> in the right place.</h1>
+        <p>Conbal gives every page a useful next moment—an observation, a prompt, a fact, or a quiet nudge—without asking you to rebuild the page around it.</p>
+        <div class="hero-actions"><a class="button" href="/admin/login.html">Create a content system</a><a class="button button-secondary" href="#examples">See it in motion ↓</a></div>
+        <div class="hero-console" aria-label="Conbal delivery characteristics"><span>one deferred script</span><span>no framework required</span><span>page-aware delivery</span></div>
       </div>
-      <figure class="hero-art"><img src="/conbal-hero.jpg" width="1600" height="853" alt="" fetchpriority="high"></figure>
+      <figure class="hero-art">
+        <img src="/conbal-hero.jpg" width="1600" height="853" alt="A content balloon concept board with notes and a bold red mark" fetchpriority="high">
+        <span class="hero-art__stamp">Live / 04 placements</span><span class="hero-art__count">01</span><span class="hero-art__signal" aria-hidden="true"></span>
+        <figcaption class="hero-art__caption">The page stays yours. The useful moment arrives when it is needed.</figcaption>
+      </figure>
     </section>
-    <aside class="proof-strip" aria-label="Product highlights"><ul class="container proof-list"><li><strong>Multi-site by design</strong>One account, every website.</li><li><strong>Six useful formats</strong>Responsive and fixed-size.</li><li><strong>CSV-ready</strong>Generate in bulk with any LLM.</li><li><strong>Calls counted</strong>Balloon, site, and account rollups.</li></ul></aside>
+
+    <aside class="proof-strip" aria-label="Product highlights"><ul class="container proof-list"><li><span class="proof-index">01</span><span><strong>Many sites, one room</strong>One account with site-scoped control.</span></li><li><span class="proof-index">02</span><span><strong>Page-aware by default</strong>The page chooses how much it needs.</span></li><li><span class="proof-index">03</span><span><strong>Drafts before publish</strong>Review the words before visitors see them.</span></li><li><span class="proof-index">04</span><span><strong>Calls you can trust</strong>Balloon, site, and account rollups.</span></li></ul></aside>
 
     <section class="section live-section" id="examples">
       <div class="container">
-        <div class="section-heading"><div><p class="eyebrow">Running right now</p><h2>Three real balloons, delivered by Conbal.</h2></div><p>These are not screenshots. Each example is published in Conbal, fetched through the public delivery API, and placed into a different page context below.</p></div>
+        <div class="section-heading"><div><p class="eyebrow"><span class="eyebrow-index">02 /</span> Running right now</p><h2>Same system. Three different moments.</h2></div><p>These are live examples delivered through the public API. Each one takes a different shape because the placement has a different job.</p></div>
         <div class="demo-grid">
-          <article class="demo-wide"><h3 class="demo-label">Announcement bar <span>Responsive</span></h3><div class="host-frame"><div class="host-bar" aria-hidden="true"><i></i><i></i><i></i></div><div class="host-content"><div class="host-copy" aria-hidden="true"><i></i><i></i><i></i></div><div class="banner-stage"><div data-conbal-site="CONBALDEMO01" data-conbal="announcement-bar" data-size="responsive"><span class="slot-loading">Loading live balloon…</span></div></div></div></div></article>
+          <article class="demo-wide"><h3 class="demo-label">Announcement bar <span>Responsive / wide</span></h3><div class="host-frame"><div class="host-bar" aria-hidden="true"><i></i><i></i><i></i></div><div class="host-content"><div class="host-copy" aria-hidden="true"><i></i><i></i><i></i></div><div class="banner-stage"><div data-conbal-site="CONBALDEMO01" data-conbal="announcement-bar" data-size="responsive"><span class="slot-loading">Loading live balloon…</span></div></div></div></div></article>
           <article><h3 class="demo-label">Promotion card <span>300 × 250</span></h3><div class="host-frame"><div class="host-bar" aria-hidden="true"><i></i><i></i><i></i></div><div class="fixed-stage"><div data-conbal-site="CONBALDEMO01" data-conbal="promotion-card" data-size="300x250"><span class="slot-loading">Loading live balloon…</span></div></div></div></article>
           <article><h3 class="demo-label">Signup banner <span>320 × 100</span></h3><div class="host-frame"><div class="host-bar" aria-hidden="true"><i></i><i></i><i></i></div><div class="host-content"><div class="host-copy" aria-hidden="true"><i></i><i></i><i></i></div><div class="banner-stage"><div data-conbal-site="CONBALDEMO01" data-conbal="signup-banner" data-size="320x100"><span class="slot-loading">Loading live balloon…</span></div></div></div></div></article>
         </div>
       </div>
     </section>
 
-    <section class="container section">
-      <div class="section-heading"><div><p class="eyebrow">A short path to live</p><h2>Create. Publish. Place.</h2></div><p>Conbal separates fast-moving content from the slower work of rebuilding a page. Your site keeps its structure; your message gets room to move.</p></div>
-      <div class="story-grid"><article class="story-card"><h3>Create the moment</h3><p>Write HTML and scoped CSS in the editor, or import up to 100 validated draft balloons from an LLM-ready CSV.</p></article><article class="story-card"><h3>Publish with control</h3><p>Preview first, publish when it is right, and unpublish instantly without removing your page placement.</p></article><article class="story-card"><h3>Place it anywhere</h3><p>Copy one small embed, choose a slug and size, and let Conbal deliver the current published content.</p></article></div>
+    <section class="container section" id="method">
+      <div class="section-heading"><div><p class="eyebrow"><span class="eyebrow-index">03 /</span> A short path to live</p><h2>Shape the moment. Keep the page.</h2></div><p>Conbal separates fast-moving content from the slower work of rebuilding a site. Your structure stays steady; your message gets room to move.</p></div>
+      <div class="story-grid"><article class="story-card"><h3>Create the moment</h3><p>Write trusted HTML and scoped CSS, or import reviewable drafts from an LLM-ready CSV.</p></article><article class="story-card"><h3>Publish with control</h3><p>Preview first, publish when it is right, and unpublish instantly without removing placement.</p></article><article class="story-card"><h3>Place it anywhere</h3><p>Install one deferred script. Page-aware delivery chooses useful locations and fresh samples.</p></article></div>
     </section>
 
     <section class="container section feature-section">
-      <div class="feature-grid"><article class="feature"><b>Built for many sites</b><p>Switch between every property from one account while content and analytics remain site-scoped.</p></article><article class="feature"><b>Useful dimensions</b><p>Choose responsive, 300×250, 336×280, 728×90, 160×600, or 320×100.</p></article><article class="feature"><b>Bulk generation</b><p>Download a complete Markdown generation guide and import reviewable, validated CSV drafts.</p></article><article class="feature"><b>Delivery analytics</b><p>See calls per balloon, selected site, every site, and the whole account.</p></article><article class="feature"><b>Raw creative control</b><p>Bring your own trusted HTML and scoped CSS without forcing a visual template.</p></article><article class="feature"><b>Fast by default</b><p>A deferred, dependency-free loader fetches only the published balloons present on the page.</p></article></div>
-      <div class="code-panel"><div><p class="eyebrow">Small footprint</p><h3>Your page keeps the placement. Conbal keeps the content fresh.</h3><p>Replace the public site key and slug with the snippet generated in your dashboard.</p></div><pre><code>&lt;div
+      <div class="feature-grid"><article class="feature"><b>Many sites, one account</b><p>Switch between properties while content and analytics stay site-scoped.</p></article><article class="feature"><b>Useful dimensions</b><p>Responsive, 300×250, 336×280, 728×90, 160×600, or 320×100.</p></article><article class="feature"><b>Bulk generation</b><p>Download the Markdown guide and import validated, reviewable CSV drafts.</p></article><article class="feature"><b>Delivery analytics</b><p>See calls per balloon, selected site, every site, and the whole account.</p></article><article class="feature"><b>Raw creative control</b><p>Bring your own trusted HTML and scoped CSS without a forced template.</p></article><article class="feature"><b>Fast by default</b><p>A dependency-free loader fetches only the published content present on the page.</p></article></div>
+      <div class="code-panel"><div><p class="eyebrow"><span class="eyebrow-index">04 /</span> Small footprint</p><h3>Your page keeps the placement. Conbal keeps the content fresh.</h3><p>Replace the public site key and slug with the snippet generated in your dashboard.</p></div><pre><code>&lt;script defer src="https://conbal.us/embed.js"
   data-conbal-site="YOUR_SITE_KEY"
-  data-conbal="launch-offer"
-  data-size="responsive"&gt;
-&lt;/div&gt;
-
-&lt;script src="https://conbal.us/embed.js" defer&gt;&lt;/script&gt;</code></pre></div>
+  data-conbal-auto&gt;&lt;/script&gt;</code></pre></div>
     </section>
 
-    <section class="container closing"><div class="closing-inner"><h2>Your site already has the page. Add the moment.</h2><a class="button" href="/admin/login.html">Start creating with Conbal</a></div></section>
+    <section class="container closing"><div class="closing-inner"><h2>Give every page a next move.</h2><a class="button" href="/admin/login.html">Start creating with Conbal ↗</a></div></section>
   </main>
-  <footer class="footer"><div class="container footer-inner"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span>Conbal</a><span>Lightweight content delivery for the sites you run.</span></div></footer>
+  <footer class="footer"><div class="container footer-inner"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span>Conbal</span></a><span>A useful content layer for the sites you run.</span></div></footer>
   <script>setTimeout(()=>document.querySelectorAll('.slot-loading').forEach(item=>item.textContent='Live example temporarily unavailable.'),7000)</script>
   <script src="/embed.js" defer></script>
 </body>

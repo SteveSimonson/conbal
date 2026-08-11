@@ -3,21 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Sign in to Conbal to create, publish, place, and measure content balloons across your websites.">
-  <title>Welcome to Conbal</title>
+  <meta name="description" content="Sign in to Conbal to create, publish, place, and measure useful content across your websites.">
+  <title>Conbal / access the control room</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/marketing.css">
 </head>
 <body class="auth-body">
   <a class="skip-link" href="#auth-card">Skip to Google sign in</a>
   <div class="auth-shell">
     <aside class="auth-story">
-      <a class="brand" href="/" aria-label="Conbal home"><span class="brand-mark" aria-hidden="true"></span>Conbal</a>
-      <div class="auth-story-copy"><p class="eyebrow">Content that moves with you</p><h2>Bring the next idea live.</h2><p>Create, publish, place, and measure flexible content across every website you run.</p><div class="auth-points"><span>Multi-site</span><span>CSV + LLM ready</span><span>Delivery analytics</span></div></div>
+      <a class="brand brand--light" href="/" aria-label="Conbal home"><span class="brand-mark" aria-hidden="true"></span><span>Conbal</span></a>
+      <div class="auth-story-copy"><p class="eyebrow"><span class="eyebrow-index">Access /</span> Content control room</p><h2>Bring the next idea live.</h2><p>Create, publish, place, and measure flexible content across every website you run.</p><div class="auth-points"><span>Multi-site</span><span>Page-aware</span><span>Draft-first</span></div></div>
     </aside>
     <main class="auth-main">
       <section class="auth-card" id="auth-card" aria-labelledby="auth-heading">
-        <a class="brand mobile-brand" href="/" aria-label="Conbal home"><span class="brand-mark" aria-hidden="true"></span>Conbal</a>
-        <h1 id="auth-heading">Welcome to Conbal.</h1>
+        <a class="brand mobile-brand" href="/" aria-label="Conbal home"><span class="brand-mark" aria-hidden="true"></span><span>Conbal</span></a>
+        <p class="auth-kicker">Workspace access</p>
+        <h1 id="auth-heading">Let’s make something worth placing.</h1>
         <p class="intro">Use your Google account to manage content across all of your sites.</p>
         <p id="message" role="alert" aria-live="assertive"></p>
         <form id="google-auth">
@@ -26,7 +30,7 @@
           <button class="button google-button" id="google-login" type="submit"><span class="google-g" aria-hidden="true">G</span>Continue with Google</button>
         </form>
         <p class="auth-note">Existing Conbal accounts can connect their Google account using the same email address.</p>
-        <a class="back-home" href="/">← Explore Conbal first</a>
+        <a class="back-home" href="/">← Return to the signal room</a>
       </section>
     </main>
   </div>
@@ -41,7 +45,7 @@
         if(response.ok&&data.location)location.assign(data.location);
         else message.textContent=data.error||'Unable to start Google sign-in. Please try again.';
       }catch{message.textContent='Unable to reach Conbal. Check your connection and try again.'}
-      finally{googleLogin.disabled=false;googleLogin.textContent='Continue with Google'}
+      finally{googleLogin.disabled=false;googleLogin.innerHTML='<span class="google-g" aria-hidden="true">G</span>Continue with Google'}
     };
   </script>
 </body>
