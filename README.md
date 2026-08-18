@@ -105,6 +105,8 @@ site key into the tag:
   defer
   src="https://conbal.us/embed.js"
   data-conbal-site="YOUR_SITE_KEY"
+  data-conbal-topics="your-site-topic"
+  data-conbal-max-slots="4"
   data-conbal-auto>
 </script>
 ```
@@ -113,13 +115,24 @@ The automatic runtime reads the visible page title, headings, path, and text
 density, then lets the page determine how many insertions it can support. It
 starts with one useful insertion for a qualifying page, adds another roughly
 every 360 words, and caps the result by the number of safe semantic anchors.
-The v2 contract retains an eight-slot abuse/readability ceiling, but there is
-no arbitrary minimum of three. It requests one fresh structured deck, remembers
-recent slugs in the browser, and renders host-native text cards with no owner
-HTML or CSS. It skips checkout, account, admin, navigation, forms, and pages
-that are too short to benefit. If delivery fails or a slot cannot be filled,
-that slot is removed and the host page is unchanged. For single-page
-applications, route changes are observed automatically.
+The v2 contract retains an eight-slot abuse/readability ceiling, but the
+automatic loader defaults to a conservative maximum of four and has no
+arbitrary minimum. Set `data-conbal-max-slots` to a value from one to eight only
+when the host has deliberately chosen a different density. Optional
+`data-conbal-topics` accepts up to seven comma-separated, lowercase site-level
+topics; they do not need to describe every individual page. When omitted, the
+loader derives a small page-context set and includes `general` either way.
+
+The loader requests one fresh structured deck, remembers recent slugs in the
+browser, and renders host-native text cards with no owner HTML or CSS. It skips
+checkout, account, admin, navigation, forms, narrow cards, grids, flex rows,
+heroes, CTAs, and pages that are too short to benefit. A candidate inside a
+layout component is moved to the nearest safe block boundary instead of being
+inserted into that component. If delivery or the external stylesheet fails, or
+a slot cannot be filled, the hidden slot is removed and the host page is
+unchanged. Content is not revealed until `embed.css` has loaded, preventing an
+unstyled flash. For single-page applications, route changes are observed
+automatically.
 
 Automatic cards load their styles from `https://conbal.us/embed.css` and fetch
 content from `https://conbal.us`; sites using a Content-Security-Policy should

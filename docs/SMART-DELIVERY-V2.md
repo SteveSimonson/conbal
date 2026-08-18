@@ -62,6 +62,36 @@ Conbal enforces these limits using JavaScript string length, matching the host
 validator, and avoids leaving a split surrogate pair at a truncation boundary.
 Hosts must still handle ordinary text wrapping inside their own components.
 
+## Shared automatic renderer
+
+Hosts that do not need hand-selected placements can use the shared v2 renderer:
+
+```html
+<script
+  defer
+  src="https://conbal.us/embed.js"
+  data-conbal-site="YOUR_SITE_KEY"
+  data-conbal-topics="site-topic,another-site-topic"
+  data-conbal-max-slots="4"
+  data-conbal-auto>
+</script>
+```
+
+`data-conbal-topics` is optional and site-scoped: each topic only needs to be
+relevant to the host site, not to every route. The loader adds `general`, keeps
+assignments unique, and defaults to at most four placements. The loader chooses
+safe semantic block boundaries and breaks out of cards, grids, flex rows,
+heroes, CTAs, lists, and narrow containers. It creates hidden placeholders,
+requests this v2 endpoint, waits for the external scoped stylesheet, validates
+the returned role, budget, slug, and copy lengths, and only then reveals text
+through DOM `textContent`. Delivery, validation, timeout, or stylesheet failure
+removes the placeholder without reserving page geometry.
+
+Applications with their own components should call the endpoint directly and
+keep `data-conbal-managed="true"` on their host root if `embed.js` is also
+present. The API response contains no presentation instructions; automatic and
+managed hosts use the same v2 delivery semantics.
+
 ## Response
 
 ```json
