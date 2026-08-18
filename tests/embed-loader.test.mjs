@@ -121,7 +121,7 @@ class FakeElement {
     this.style = {};
     this.attributes = {};
     this.className = '';
-    this.computedStyle = { display: 'block', columnCount: '1' };
+    this.computedStyle = { display: 'block', columnCount: '1', flexDirection: 'row', flexWrap: 'nowrap', gridTemplateColumns: 'none' };
     this.rectWidth = 800;
     this.listeners = {};
     this.removed = false;
@@ -359,6 +359,44 @@ test('automatic placement breaks out of cards and grids before inserting a slot'
   assert.equal(inserted.parentElement, section);
   assert.equal(card.children.some(node => node.dataset?.conbalAutoSlot !== undefined), false);
   assert.equal(grid.children.some(node => node.dataset?.conbalAutoSlot !== undefined), false);
+});
+
+test('automatic placement never escapes a flex-column application root', async () => {
+  const { document, body, main } = autoDocument();
+  const app = new FakeElement('div', main.textContent);
+  app.id = 'root';
+  app.computedStyle = { display: 'flex', columnCount: '1', flexDirection: 'column', flexWrap: 'nowrap', gridTemplateColumns: 'none' };
+  main.computedStyle = { display: 'flex', columnCount: '1', flexDirection: 'column', flexWrap: 'nowrap', gridTemplateColumns: 'none' };
+  const footer = new FakeElement('footer', 'Application footer');
+  body.children = [];
+  app.append(main, footer);
+  body.append(app);
+  const context = {
+    document,
+    fetch: async () => ({ ok: true, json: async () => ({ assignments: {
+      'auto-1': { role: 'inline-note', budget: 'standard-v1', editorial_type: 'did_you_know', slug: 'inside-app', content: { headline: 'Inside the app', body: 'This note stays within the host application content.' } },
+    } }) }),
+    URL,
+    location: { href: 'https://host.example/guide', pathname: '/guide' },
+    localStorage: { getItem: () => '[]', setItem: () => {} },
+    history: { pushState() {}, replaceState() {} },
+    window: { addEventListener() {} },
+    getComputedStyle: node => node.computedStyle,
+    setTimeout: immediateTimer,
+    clearTimeout: () => {},
+    AbortController,
+    crypto: { randomUUID: () => 'page-view-123' },
+  };
+  vm.runInNewContext(source, context);
+  await flush();
+
+  const descendants = node => node.children.flatMap(child => [child, ...descendants(child)]);
+  const slot = descendants(app).find(node => node.dataset?.conbalAutoSlot !== undefined);
+  assert.ok(slot, 'a safe flex-column flow should retain its automatic slot');
+  assert.equal(slot.parentElement, main);
+  assert.equal(body.children.some(node => node.dataset?.conbalAutoSlot !== undefined), false);
+  assert.equal(body.children.at(-1), app, 'no slot may be inserted as a sibling after #root');
+  assert.equal(app.children.at(-1), footer, 'the application footer remains last');
 });
 
 test('automatic content stays hidden until the scoped stylesheet loads', async () => {

@@ -203,15 +203,29 @@
     if (unsafePlacementNode(node) || narrowPlacementParent(node)) return true;
     const style = layoutStyle(node);
     const display = String(style?.display || '').toLowerCase();
-    if (display.includes('flex') || display.includes('grid') || display === 'contents') return true;
+    if (display.includes('flex')) {
+      const direction = String(style?.flexDirection || 'row').toLowerCase();
+      const wrap = String(style?.flexWrap || 'nowrap').toLowerCase();
+      if (direction !== 'column' || wrap !== 'nowrap') return true;
+    }
+    if (display.includes('grid')) {
+      const columns = String(style?.gridTemplateColumns || '').trim().toLowerCase();
+      // Computed styles normally resolve each grid track to one whitespace-
+      // separated value. Anything more complex fails closed as multi-column.
+      const oneColumn = !columns || columns === 'none' || (!columns.startsWith('repeat(') && !/\s/.test(columns));
+      if (!oneColumn) return true;
+    }
+    if (display === 'contents') return true;
     const columns = Number.parseInt(style?.columnCount || '1', 10);
     return Number.isFinite(columns) && columns > 1;
   }
 
-  function placementFor(node) {
+  function placementFor(node, root) {
     let anchor = node;
     let parent = anchor?.parentElement;
-    while (parent && unsafePlacementParent(parent)) {
+    // The semantic page root is a hard placement boundary. Climbing beyond it
+    // can move an insertion outside a React/Vue app shell and below its footer.
+    while (parent && parent !== root && unsafePlacementParent(parent)) {
       anchor = parent;
       parent = anchor.parentElement;
     }
@@ -244,7 +258,7 @@
     const placements = [];
     const placementAnchors = new Set();
     for (const candidate of candidates) {
-      const placement = placementFor(candidate);
+      const placement = placementFor(candidate, root);
       if (!placement || placementAnchors.has(placement.anchor)) continue;
       placementAnchors.add(placement.anchor);
       placements.push(placement);
