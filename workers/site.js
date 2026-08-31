@@ -736,5 +736,23 @@ async function api(request, env, url, context) {
   if (match) { const balloon=await ownerBalloon(env,user,match[1]); if(match[2]==='publish'&&method==='POST'){await publish(env,balloon);await env.DB.prepare("UPDATE balloons SET status='published',updated_at=datetime('now') WHERE id=?").bind(balloon.id).run();return json({ok:true})} if(match[2]==='unpublish'&&method==='POST'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.batch([env.DB.prepare('DELETE FROM smart_delivery_items WHERE balloon_id=?').bind(balloon.id),env.DB.prepare("UPDATE balloons SET status='draft',updated_at=datetime('now') WHERE id=?").bind(balloon.id)]);return json({ok:true})} if(!match[2]&&method==='PATCH'){const b=cleanBalloon({...balloon,...await body(request)});try{await env.DB.prepare("UPDATE balloons SET title=?,slug=?,html=?,css=?,size=?,editorial_type=?,topics=?,updated_at=datetime('now') WHERE id=?").bind(b.title,b.slug,b.html,b.css,b.size,b.editorial_type,b.topics,balloon.id).run()}catch{return fail('That slug already exists for this site',409)}if(balloon.status==='published'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await publish(env,{...balloon,...b})}return json({ok:true})} if(!match[2]&&method==='DELETE'){await env.CONBAL_KV.delete(`b:${balloon.site_key}:${balloon.slug}`);await env.DB.batch([env.DB.prepare('DELETE FROM smart_delivery_items WHERE balloon_id=?').bind(balloon.id),env.DB.prepare('DELETE FROM balloon_delivery_counts WHERE balloon_id=?').bind(balloon.id),env.DB.prepare('DELETE FROM balloons WHERE id=?').bind(balloon.id)]);return json({ok:true})} }
   return fail('Not found', 404);
 }
+function assetCacheControl(pathname) {
+  if (pathname.startsWith('/assets/')) return 'public, max-age=31536000, immutable';
+  if (/\.(woff2?|ttf|otf)$/i.test(pathname)) return 'public, max-age=31536000, immutable';
+  if (/\.(webp|avif|png|jpe?g|gif|svg|ico)$/i.test(pathname)) return 'public, max-age=604800';
+  if (pathname === '/embed.js' || pathname === '/embed.css') return 'public, max-age=0, must-revalidate';
+  if (/\.(js|css)$/i.test(pathname)) return 'public, max-age=300, must-revalidate';
+  return 'public, max-age=0, must-revalidate';
+}
+async function assetResponse(request, env) {
+  const url = new URL(request.url);
+  const source = request.method === 'HEAD' ? new Request(url, { method: 'GET', headers: request.headers }) : request;
+  const response = await env.ASSETS.fetch(source);
+  const headers = new Headers(response.headers);
+  headers.set('cache-control', assetCacheControl(url.pathname));
+  const contentType = headers.get('content-type') || '';
+  if (contentType.startsWith('text/html') && !/charset=/i.test(contentType)) headers.set('content-type', 'text/html; charset=utf-8');
+  return new Response(request.method === 'HEAD' ? null : response.body, { status: response.status, statusText: response.statusText, headers });
+}
 function secure(response) { const h=new Headers(response.headers);h.set('x-content-type-options','nosniff');h.set('strict-transport-security','max-age=31536000; includeSubDomains');return new Response(response.body,{status:response.status,statusText:response.statusText,headers:h}); }
-export default { async fetch(request, env, context) { const url=new URL(request.url), host=request.headers.get('host') || url.host; if (host==='www.conbal.us' || (host==='conbal.us' && url.protocol==='http:')) { url.protocol='https:';url.hostname='conbal.us';return Response.redirect(url,301); } try { let response; if(url.pathname.startsWith('/v2/b/'))response=await v2Delivery(request,env,url,context); else if(url.pathname.startsWith('/b/'))response=await delivery(request,env,url,context); else if(url.pathname.startsWith('/api/'))response=await api(request,env,url,context); else response=await env.ASSETS.fetch(request); return secure(response); } catch(error) { return secure(fail(error.message||'Server error',error.status||500)); } } };
+export default { async fetch(request, env, context) { const url=new URL(request.url), host=(request.headers.get('host') || url.host).split(':')[0].toLowerCase(); if (host==='www.conbal.us' || (host==='conbal.us' && url.protocol==='http:')) { url.protocol='https:';url.hostname='conbal.us';return secure(Response.redirect(url,301)); } try { let response; if(url.pathname.startsWith('/v2/b/'))response=await v2Delivery(request,env,url,context); else if(url.pathname.startsWith('/b/'))response=await delivery(request,env,url,context); else if(url.pathname.startsWith('/api/'))response=await api(request,env,url,context); else response=await assetResponse(request,env); return secure(response); } catch(error) { return secure(fail(error.message||'Server error',error.status||500)); } } };

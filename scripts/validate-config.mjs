@@ -23,8 +23,10 @@ if (wrangler) {
   if (wrangler.kv_namespaces?.length !== 1 || !wrangler.kv_namespaces[0]?.id || (!allowPlaceholderBindings && wrangler.kv_namespaces[0].id.includes('REPLACE_WITH'))) {
     failures.push('Set the KV namespace ID in wrangler.jsonc before deploying.');
   }
-  if (!wrangler.assets?.run_worker_first?.includes('/api/*') || !wrangler.assets?.run_worker_first?.includes('/b/*') || !wrangler.assets?.run_worker_first?.includes('/v2/b/*')) {
-    failures.push('Assets must route /api/*, /b/*, and /v2/b/* through the worker.');
+  const runWorkerFirst = wrangler.assets?.run_worker_first;
+  const workerFirstRoutes = Array.isArray(runWorkerFirst) ? runWorkerFirst : [];
+  if (runWorkerFirst !== true && !(['/api/*', '/b/*', '/v2/b/*'].every(route => workerFirstRoutes.includes(route)))) {
+    failures.push('Assets must route every request, or at least /api/*, /b/*, and /v2/b/*, through the worker.');
   }
 }
 
