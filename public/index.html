@@ -5,9 +5,23 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="Conbal is a lightweight content layer for publishing useful, page-aware moments across every website you run.">
   <title>Conbal — put the right thought in the right place</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="canonical" href="https://conbal.us/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Conbal">
+  <meta property="og:url" content="https://conbal.us/">
+  <meta property="og:title" content="Conbal — put the right thought in the right place">
+  <meta property="og:description" content="Conbal is a lightweight content layer for publishing useful, page-aware moments across every website you run.">
+  <meta property="og:image" content="https://conbal.us/conbal-og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Conbal — put the right thought in the right place">
+  <meta name="twitter:description" content="Conbal is a lightweight content layer for publishing useful, page-aware moments across every website you run.">
+  <meta name="twitter:image" content="https://conbal.us/conbal-og.jpg">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"Conbal","url":"https://conbal.us/","description":"Conbal is a lightweight content layer for publishing useful, page-aware moments across every website you run."}</script>
+  <link rel="preload" href="/assets/fonts/fraunces-v38-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/assets/fonts/manrope-v20-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" as="image" href="/conbal-hero-800.webp" imagesrcset="/conbal-hero-800.webp 800w, /conbal-hero-1280.webp 1280w" imagesizes="(max-width: 950px) 92vw, 58vw" fetchpriority="high">
   <link rel="stylesheet" href="/marketing.css">
 </head>
 <body>
@@ -32,7 +46,10 @@
         <div class="hero-console" aria-label="Conbal delivery characteristics"><span>one deferred script</span><span>no framework required</span><span>page-aware delivery</span></div>
       </div>
       <figure class="hero-art">
-        <img src="/conbal-hero.jpg" width="1600" height="853" alt="A content balloon concept board with notes and a bold red mark" fetchpriority="high">
+        <picture>
+          <source type="image/webp" srcset="/conbal-hero-800.webp 800w, /conbal-hero-1280.webp 1280w" sizes="(max-width: 950px) 92vw, 58vw">
+          <img src="/conbal-hero.jpg" width="1600" height="853" alt="A content balloon concept board with notes and a bold red mark" fetchpriority="high">
+        </picture>
         <span class="hero-art__stamp">Live / 04 placements</span><span class="hero-art__count">01</span><span class="hero-art__signal" aria-hidden="true"></span>
         <figcaption class="hero-art__caption">The page stays yours. The useful moment arrives when it is needed.</figcaption>
       </figure>
@@ -67,6 +84,23 @@
   </main>
   <footer class="footer"><div class="container footer-inner"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span>Conbal</span></a><span>A useful content layer for the sites you run.</span></div></footer>
   <script>setTimeout(()=>document.querySelectorAll('.slot-loading').forEach(item=>item.textContent='Live example temporarily unavailable.'),7000)</script>
-  <script src="/embed.js" defer></script>
+  <script>
+    (function () {
+      var loaded = false;
+      function loadEmbed() {
+        if (loaded) return;
+        loaded = true;
+        var script = document.createElement('script');
+        script.src = '/embed.js';
+        script.defer = true;
+        document.body.appendChild(script);
+      }
+      var idle = window.requestIdleCallback || function (callback) { setTimeout(callback, 1); };
+      idle(loadEmbed, { timeout: 2500 });
+      ['pointerdown', 'keydown', 'scroll', 'touchstart'].forEach(function (type) {
+        window.addEventListener(type, loadEmbed, { once: true, passive: true });
+      });
+    })();
+  </script>
 </body>
 </html>
