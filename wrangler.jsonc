@@ -7,7 +7,7 @@
     { "pattern": "conbal.us", "zone_name": "conbal.us" }, { "pattern": "conbal.us/*", "zone_name": "conbal.us" },
     { "pattern": "www.conbal.us", "zone_name": "conbal.us" }, { "pattern": "www.conbal.us/*", "zone_name": "conbal.us" }
   ],
-  "d1_databases": [{ "binding": "DB", "database_name": "conbal-db", "database_id": "REPLACE_WITH_D1_DATABASE_ID" }],
-  "kv_namespaces": [{ "binding": "CONBAL_KV", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "conbal-db", "database_id": "11977074-ec30-4530-ba57-b90377511565" }],
+  "kv_namespaces": [{ "binding": "CONBAL_KV", "id": "a0eedc89f48c4902a69386930fff6885" }],
   "observability": { "enabled": true }
 }
