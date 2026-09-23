@@ -22,6 +22,15 @@ function request(path, init = {}) {
   return new Request(`https://conbal.us${path}`, init);
 }
 
+test('privacy page is served at /privacy', async () => {
+  const response = await worker.fetch(request('/privacy'), env({
+    '/privacy.html': { type: 'text/html', body: '<!doctype html><title>Privacy</title><h1>Privacy</h1>' },
+  }), {});
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /Privacy/);
+  assert.match(response.headers.get('content-type'), /text\/html/);
+});
+
 test('www host redirects to the HTTPS apex in one hop with HSTS', async () => {
   const response = await worker.fetch(new Request('https://www.conbal.us/method?ref=1'), env(), {});
   assert.equal(response.status, 301);
