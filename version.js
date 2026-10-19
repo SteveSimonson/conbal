@@ -1,4 +1,4 @@
 window.CONBAL_RELEASE = Object.freeze({
-  version: "0.1.0",
-  releasedAt: "2026-08-18",
+  version: "0.1.1",
+  releasedAt: "2026-10-19",
 });

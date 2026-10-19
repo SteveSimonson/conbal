@@ -2,6 +2,16 @@
 
 All notable production changes to Conbal are recorded here.
 
+## [0.1.1] - 2026-10-19
+
+### Added
+
+- **Public crawl files**: `/sitemap.xml` lists the home page and privacy page, and `/robots.txt` allows crawling and points at that sitemap.
+
+### Fixed
+
+- **Example fallback**: the three homepage examples show their published copy in the page HTML. The embed script still replaces those slots when the live balloons load.
+
 ## [0.1.0] - 2026-08-18
 
 ### Added
